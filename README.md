@@ -1,4 +1,4 @@
-# GEX-lens
+# GEX Lens
 
 A local, single-user dashboard for options gamma-exposure (GEX) and implied-volatility
 analysis. It fetches one option-chain snapshot per manual refresh, computes IV and
