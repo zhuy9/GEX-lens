@@ -28,7 +28,7 @@ Requires Python 3.12 and Node.js 18+.
 
 ```bash
 cd backend
-python -m venv .venv
+python3.12 -m venv .venv      # Windows with the `py` launcher: `py -3.12 -m venv .venv`
 .venv/Scripts/activate        # Windows; use `source .venv/bin/activate` on macOS/Linux
 pip install -r requirements.txt
 cp settings.example.json settings.json   # edit as needed; never commit this file
