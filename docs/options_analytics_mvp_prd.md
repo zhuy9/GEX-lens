@@ -30,6 +30,8 @@ This is a snapshot-based research application, not a real-time trading feed or e
 
 **Do not implement:** automatic refresh, background collection, WebSockets, gamma-flip/profile calculations, trading signals, order execution, news integration, historical replay, user accounts, cloud deployment, or additional live data providers. The provider interface and separate synthetic fixture implementation are required, not excluded.
 
+This list is an MVP scope-discipline decision, not a judgment that these calculations are infeasible or unsafe to compute from the two analytical views already in scope. Revisit case by case in a future revision of this PRD; do not add them by inferring intent from an in-chat request alone.
+
 ## 2. Source-access gate
 
 The Nasdaq webpage is not an established API contract. Nasdaq's current website terms restrict data capture and extraction, including use in data-analysis software. Personal use must not be treated as blanket permission for automated collection. Its documented authenticated options API is a separate service. [S1][S2]
@@ -409,7 +411,7 @@ Heatmap axes are ascending numeric strike and ascending expiration date. Use the
 
 Hover must show strike, expiration, call/put OI, call/put gamma, call/put exposure magnitudes, signed proxy, gross exposure, and completeness. Use USD millions for display; keep unscaled dollar values in the API. Render unknown cells as gaps, not zero-colored cells.
 
-Do not display a whole-market total GEX or infer support/resistance levels.
+Do not display a whole-market total GEX or infer support/resistance levels. As with section 1, this is an MVP scope boundary, not a claim that call/put walls or a gamma-flip level cannot be derived from the per-cell data already computed here.
 
 ## 8. IV surface
 
