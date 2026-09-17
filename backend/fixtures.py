@@ -14,11 +14,14 @@ from provider import ProviderError
 FIXED_VALUATION_AT = datetime(2026, 1, 2, 21, 0, tzinfo=UTC)
 
 # spot price, flat-vol assumption, and dividend yield used only to synthesize
-# plausible bid/ask around a BSM mid. Not read from settings.json.
+# plausible bid/ask around a BSM mid. Not read from settings.json -- q=0.0
+# here matches settings.example.json's dividend_yields so the shipped fixture
+# demo is a consistent known-volatility scenario: analyze_snapshot re-prices
+# with the same q it was generated under, not a different one (R11).
 _SYMBOL_DATA = {
-    "SPY": {"spot": 550.00, "sigma": 0.16, "q": 0.012},
-    "QQQ": {"spot": 480.00, "sigma": 0.20, "q": 0.006},
-    "AAPL": {"spot": 225.00, "sigma": 0.28, "q": 0.004},
+    "SPY": {"spot": 550.00, "sigma": 0.16, "q": 0.0},
+    "QQQ": {"spot": 480.00, "sigma": 0.20, "q": 0.0},
+    "AAPL": {"spot": 225.00, "sigma": 0.28, "q": 0.0},
 }
 _RISK_FREE_RATE = 0.04
 _DTE_OFFSETS = (2, 9, 16, 30, 44, 58)
@@ -96,6 +99,14 @@ class FixtureProvider:
         if request.symbol not in _SYMBOL_DATA:
             raise ProviderError("UNSUPPORTED_SYMBOL", f"No fixture data for {request.symbol!r}")
 
+        # Real wall-clock collection instants -- only the *pricing* inputs
+        # (chain_asof/spot_asof/quote_asof below) are pinned to
+        # FIXED_VALUATION_AT for deterministic analytics. Freezing collection
+        # metadata too made every fixture snapshot share one collected_at,
+        # so "latest" (storage.py orders by collected_at DESC, snapshot_id
+        # DESC as a tiebreak) fell back to comparing random UUIDs instead of
+        # refresh order, and newly generated data looked collected long ago.
+        collection_started_at = datetime.now(UTC)
         rng = random.Random(f"fixture-{request.symbol}")
         rows = _synthesize_symbol(request.symbol, request.min_calendar_dte, request.max_calendar_dte, rng)
 
@@ -136,8 +147,8 @@ class FixtureProvider:
             underlying_price=_SYMBOL_DATA[request.symbol]["spot"],
             underlying_price_kind="last_trade",
             underlying_price_origin="chain_payload",
-            collection_started_at=FIXED_VALUATION_AT,
-            collected_at=FIXED_VALUATION_AT,
+            collection_started_at=collection_started_at,
+            collected_at=datetime.now(UTC),
             chain_asof=FIXED_VALUATION_AT,
             spot_asof=FIXED_VALUATION_AT,
             oi_asof=None,

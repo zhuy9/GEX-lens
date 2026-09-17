@@ -6,6 +6,7 @@ from datetime import datetime
 from conftest import StubProvider, make_settings, make_snapshot
 from fastapi.testclient import TestClient
 
+import storage
 from app import create_app
 from provider import ProviderError
 
@@ -236,6 +237,29 @@ def test_unexpected_exception_is_logged_sanitized_and_does_not_leak_internals(tm
 
     unchanged = client.get("/api/dashboard/SPY").json()
     assert unchanged["snapshot_id"] == first["snapshot_id"]
+
+
+def test_repeated_fixture_collections_are_ordered_by_recency_not_uuid(tmp_path):
+    # R11: every fixture snapshot used to share one frozen collected_at, so
+    # "latest" (storage.py: ORDER BY collected_at DESC, snapshot_id DESC)
+    # fell back to comparing random UUIDs -- a later collection could sort
+    # as "older" than an earlier one. Calls the orchestration function
+    # directly since the refresh route's cooldown (irrelevant to this
+    # storage-ordering question) would otherwise block the second call.
+    from app import _collect_and_save
+    from fixtures import FixtureProvider
+
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    storage.init_schema(settings.db_path)
+    provider = FixtureProvider()
+
+    first = _collect_and_save(settings, provider, "SPY")
+    time.sleep(0.01)
+    second = _collect_and_save(settings, provider, "SPY")
+    assert first["snapshot_id"] != second["snapshot_id"]
+
+    latest = storage.get_latest_dashboard(settings.db_path, settings.source_mode, "SPY")
+    assert latest["snapshot_id"] == second["snapshot_id"]
 
 
 def test_provider_rate_limit_extends_cooldown_and_returns_503(tmp_path):
