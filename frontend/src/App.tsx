@@ -167,9 +167,14 @@ export default function App() {
 						<CardHeader>
 							<CardTitle>GEX Heatmap</CardTitle>
 						</CardHeader>
-						<CardContent className="h-[560px]">
+						<CardContent>
 							<ChartErrorBoundary>
-								<GexHeatmap gex={dashboard.gex} mode={gexMode} />
+								<GexHeatmap
+									gex={dashboard.gex}
+									mode={gexMode}
+									spot={dashboard.spot}
+									valuationAt={dashboard.valuation_at}
+								/>
 							</ChartErrorBoundary>
 						</CardContent>
 					</Card>

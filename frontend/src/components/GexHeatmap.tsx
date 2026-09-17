@@ -1,20 +1,21 @@
-import { useMemo } from "react";
-import Plot from "react-plotly.js";
+import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { GexCell, GexData, GexMode } from "@/types";
 
 interface GexHeatmapProps {
 	gex: GexData;
 	mode: GexMode;
+	spot: number;
+	valuationAt: string;
 }
 
 const MILLIONS = 1_000_000;
 const THOUSAND = 1_000;
-const PLOT_HEIGHT_PX = 560; // fixed: keeps the x-axis pinned at a constant position
-const ROW_HEIGHT_PX = 20; // minimum per-strike height for readable y-axis labels
-const CHART_CHROME_PX = 130; // x-axis labels + margins
-// Nearest 7 expirations, not the full 1-60 DTE fetch/eligibility scope (which
-// stays fixed per the PRD) -- just how many columns this chart renders.
-const MAX_VISIBLE_EXPIRATIONS = 7;
+const WINDOW_SIZE = 17; // strikes shown by default, centered on spot
+const NEG_COLOR: [number, number, number] = [220, 38, 38]; // red-600, put-heavy
+const POS_COLOR: [number, number, number] = [22, 163, 74]; // green-600, call-heavy
+const GROSS_COLOR: [number, number, number] = [217, 119, 6]; // amber-600
+const NEUTRAL: [number, number, number] = [250, 250, 250]; // zinc-50, zero baseline
 
 function fmtMillions(value: number | null): string {
 	if (value === null) return "Unknown";
@@ -25,13 +26,40 @@ function fmtCount(value: number | null): string {
 	return value === null ? "Unknown" : value.toLocaleString();
 }
 
-/** Short on-cell label, e.g. "44.1M", "972K", "-781" (matches reference chart). */
-function fmtCompact(value: number | null): string {
+/** Short signed dollar label, e.g. "$17.8M", "-$2.0M", "$0" (matches reference chart). */
+function fmtDollarsCompact(value: number | null): string {
 	if (value === null) return "";
+	const sign = value < 0 ? "-" : "";
 	const abs = Math.abs(value);
-	if (abs >= MILLIONS) return `${(value / MILLIONS).toFixed(1)}M`;
-	if (abs >= THOUSAND) return `${(value / THOUSAND).toFixed(0)}K`;
-	return `${value.toFixed(0)}`;
+	if (abs >= MILLIONS) return `${sign}$${(abs / MILLIONS).toFixed(1)}M`;
+	if (abs >= THOUSAND) return `${sign}$${(abs / THOUSAND).toFixed(0)}K`;
+	return `${sign}$${abs.toFixed(0)}`;
+}
+
+function fmtStrike(strike: string): string {
+	const n = Number(strike);
+	return `$${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}`;
+}
+
+/** Display-only approximation (UTC calendar days); the server owns the
+ * authoritative NY-timezone calendar_dte used for pricing/eligibility. */
+function displayDte(expirationIso: string, valuationAtIso: string): number {
+	const expUtcMidnight = Date.parse(`${expirationIso}T00:00:00Z`);
+	const val = new Date(valuationAtIso);
+	const valUtcMidnight = Date.UTC(
+		val.getUTCFullYear(),
+		val.getUTCMonth(),
+		val.getUTCDate(),
+	);
+	return Math.round((expUtcMidnight - valUtcMidnight) / 86_400_000);
+}
+
+function fmtExpirationHeader(expirationIso: string): string {
+	return new Date(`${expirationIso}T00:00:00Z`).toLocaleDateString("en-US", {
+		timeZone: "UTC",
+		month: "short",
+		day: "numeric",
+	});
 }
 
 function cellRaw(cell: GexCell | null, mode: GexMode): number | null {
@@ -39,18 +67,13 @@ function cellRaw(cell: GexCell | null, mode: GexMode): number | null {
 	return mode === "signed" ? cell.signed_proxy : cell.gross_exposure;
 }
 
-function cellValue(cell: GexCell | null, mode: GexMode): number | null {
-	const raw = cellRaw(cell, mode);
-	return raw === null ? null : raw / MILLIONS;
-}
-
-function cellHoverText(
+function cellTitle(
 	cell: GexCell | null,
 	strike: string,
 	expiration: string,
 ): string {
 	if (cell === null) {
-		return `Strike ${strike}<br>Expiration ${expiration}<br>No contracts in scope`;
+		return `Strike ${strike}\nExpiration ${expiration}\nNo contracts in scope`;
 	}
 	return [
 		`Strike ${strike}`,
@@ -64,104 +87,185 @@ function cellHoverText(
 		`Signed proxy: ${fmtMillions(cell.signed_proxy)}`,
 		`Gross exposure: ${fmtMillions(cell.gross_exposure)}`,
 		`Status: ${cell.status}`,
-	].join("<br>");
+	].join("\n");
 }
 
-export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
-	const expirations = useMemo(
-		() => gex.expirations.slice(0, MAX_VISIBLE_EXPIRATIONS),
-		[gex.expirations],
-	);
+function mixChannel(a: number, b: number, t: number): number {
+	return Math.round(a + (b - a) * t);
+}
 
-	const { z, text, hoverText, zmin, zmax } = useMemo(() => {
-		// Transposed relative to gex.cells (which is [expiration][strike]) so
-		// strike lands on the y-axis and expiration on the x-axis.
-		const z = gex.strikes.map((_, strikeIndex) =>
-			expirations.map((_, expIndex) =>
-				cellValue(gex.cells[expIndex][strikeIndex], mode),
-			),
-		);
-		const text = gex.strikes.map((_, strikeIndex) =>
-			expirations.map((_, expIndex) =>
-				fmtCompact(cellRaw(gex.cells[expIndex][strikeIndex], mode)),
-			),
-		);
-		const hoverText = gex.strikes.map((strike, strikeIndex) =>
-			expirations.map((expiration, expIndex) =>
-				cellHoverText(gex.cells[expIndex][strikeIndex], strike, expiration),
-			),
-		);
-		const values = z.flat().filter((v): v is number => v !== null);
-		const maxAbs = values.length > 0 ? Math.max(...values.map(Math.abs)) : 0;
-		if (mode === "signed") {
-			const bound = maxAbs > 0 ? maxAbs : 1;
-			return { z, text, hoverText, zmin: -bound, zmax: bound };
-		}
-		const bound = maxAbs > 0 ? maxAbs : 1;
-		return { z, text, hoverText, zmin: 0, zmax: bound };
-	}, [gex, mode, expirations]);
+function magnitudeFraction(value: number | null, bound: number): number {
+	if (value === null || bound <= 0) return 0;
+	return Math.min(1, Math.abs(value) / bound);
+}
+
+function cellBackground(
+	value: number | null,
+	bound: number,
+	mode: GexMode,
+): string | undefined {
+	if (value === null) return undefined; // gap: no fill, not a zero-colored cell
+	const target =
+		mode === "signed" ? (value >= 0 ? POS_COLOR : NEG_COLOR) : GROSS_COLOR;
+	const t = magnitudeFraction(value, bound);
+	const [r, g, b] = [0, 1, 2].map((i) => mixChannel(NEUTRAL[i], target[i], t));
+	return `rgb(${r}, ${g}, ${b})`;
+}
+
+function cellTextColor(
+	value: number | null,
+	bound: number,
+): string | undefined {
+	if (value === null) return undefined;
+	return magnitudeFraction(value, bound) > 0.45 ? "#fff" : "#18181b";
+}
+
+export function GexHeatmap({ gex, mode, spot, valuationAt }: GexHeatmapProps) {
+	const [expanded, setExpanded] = useState(false);
+
+	const bound = useMemo(() => {
+		const values = gex.cells
+			.flat()
+			.map((cell) => cellRaw(cell, mode))
+			.filter((v): v is number => v !== null)
+			.map(Math.abs);
+		return values.length > 0 ? Math.max(...values) : 1;
+	}, [gex, mode]);
 
 	if (gex.strikes.length === 0 || gex.expirations.length === 0) {
 		return (
-			<div className="flex h-96 items-center justify-center text-sm text-muted-foreground">
+			<div className="flex h-40 items-center justify-center text-sm text-muted-foreground">
 				No in-scope strikes or expirations in this snapshot.
 			</div>
 		);
 	}
 
-	// Show only as many strikes as fit at a readable row height; the rest are
-	// reachable by dragging (dragmode "pan") without the x-axis ever moving,
-	// since the plot's own height stays fixed.
-	const visibleRows = Math.max(
-		1,
-		Math.floor((PLOT_HEIGHT_PX - CHART_CHROME_PX) / ROW_HEIGHT_PX),
-	);
-	const yaxisRange: [number, number] | undefined =
-		gex.strikes.length > visibleRows ? [-0.5, visibleRows - 0.5] : undefined;
+	const nearestIndex = gex.strikes.reduce((best, strike, i) => {
+		const diff = Math.abs(Number(strike) - spot);
+		const bestDiff = Math.abs(Number(gex.strikes[best]) - spot);
+		return diff < bestDiff ? i : best;
+	}, 0);
+
+	let visibleIndices = gex.strikes.map((_, i) => i);
+	const isWindowed = !expanded && gex.strikes.length > WINDOW_SIZE;
+	if (isWindowed) {
+		const half = Math.floor(WINDOW_SIZE / 2);
+		let start = Math.max(0, nearestIndex - half);
+		const end = Math.min(gex.strikes.length, start + WINDOW_SIZE);
+		start = Math.max(0, end - WINDOW_SIZE);
+		visibleIndices = Array.from({ length: end - start }, (_, i) => start + i);
+	}
+	// Highest strike first, like an order book.
+	const rowIndices = [...visibleIndices].reverse();
 
 	return (
-		<div style={{ height: PLOT_HEIGHT_PX }}>
-			<Plot
-				data={[
-					{
-						type: "heatmap",
-						x: expirations,
-						y: gex.strikes,
-						z,
-						text,
-						texttemplate: "%{text}",
-						textfont: { color: "#fff", size: 10 },
-						hovertext: hoverText,
-						hovertemplate: "%{hovertext}<extra></extra>",
-						colorscale: mode === "signed" ? "RdBu" : "YlOrRd",
-						reversescale: mode === "signed",
-						zmid: mode === "signed" ? 0 : undefined,
-						zmin,
-						zmax,
-						colorbar: { title: { text: "USD millions" } },
-						xgap: 1,
-						ygap: 1,
-					},
-				]}
-				layout={{
-					autosize: true,
-					dragmode: "pan",
-					margin: { l: 90, r: 20, t: 20, b: 60 },
-					xaxis: { title: { text: "Expiration" }, type: "category" },
-					yaxis: {
-						title: { text: "Strike" },
-						type: "category",
-						range: yaxisRange,
-					},
-				}}
-				style={{ width: "100%", height: "100%" }}
-				useResizeHandler
-				config={{
-					displaylogo: false,
-					responsive: true,
-					modeBarButtonsToRemove: ["sendDataToCloud"],
-				}}
-			/>
+		<div className="flex flex-col gap-2">
+			<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+				{mode === "signed" ? (
+					<div className="flex items-center gap-2">
+						<span>Put-heavy</span>
+						<div
+							className="h-2 w-28 rounded-full"
+							style={{
+								background: `linear-gradient(to right, rgb(${NEG_COLOR.join(",")}), rgb(${NEUTRAL.join(",")}), rgb(${POS_COLOR.join(",")}))`,
+							}}
+						/>
+						<span>Call-heavy</span>
+					</div>
+				) : (
+					<div className="flex items-center gap-2">
+						<span>Low</span>
+						<div
+							className="h-2 w-28 rounded-full"
+							style={{
+								background: `linear-gradient(to right, rgb(${NEUTRAL.join(",")}), rgb(${GROSS_COLOR.join(",")}))`,
+							}}
+						/>
+						<span>High</span>
+					</div>
+				)}
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={() => setExpanded((v) => !v)}
+				>
+					{expanded ? "Collapse" : `Expand (${gex.strikes.length} strikes)`}
+				</Button>
+			</div>
+
+			<div className="max-h-[520px] overflow-auto rounded-md border">
+				<table className="w-full border-collapse text-xs">
+					<thead>
+						<tr>
+							<th className="sticky top-0 left-0 z-20 border-r border-b bg-background px-2 py-1.5 text-left">
+								Strike
+							</th>
+							{gex.expirations.map((expiration) => (
+								<th
+									key={expiration}
+									className="sticky top-0 z-10 border-b bg-background px-2 py-1.5 text-right font-medium whitespace-nowrap"
+								>
+									<div>{fmtExpirationHeader(expiration)}</div>
+									<div className="font-normal text-muted-foreground">
+										{displayDte(expiration, valuationAt)}d
+									</div>
+								</th>
+							))}
+						</tr>
+					</thead>
+					<tbody>
+						{rowIndices.map((strikeIndex) => {
+							const strike = gex.strikes[strikeIndex];
+							const isSpotRow = strikeIndex === nearestIndex;
+							return (
+								<tr key={strike}>
+									<td
+										className={`sticky left-0 z-10 border-r px-2 py-1 font-medium whitespace-nowrap ${
+											isSpotRow ? "bg-primary/10 text-primary" : "bg-background"
+										}`}
+									>
+										{fmtStrike(strike)}
+									</td>
+									{gex.expirations.map((expiration, expIndex) => {
+										const cell = gex.cells[expIndex][strikeIndex];
+										const value = cellRaw(cell, mode);
+										return (
+											<td
+												key={expiration}
+												title={cellTitle(cell, strike, expiration)}
+												className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
+												style={{
+													backgroundColor: cellBackground(value, bound, mode),
+													color: cellTextColor(value, bound),
+												}}
+											>
+												{value === null ? "" : fmtDollarsCompact(value)}
+											</td>
+										);
+									})}
+								</tr>
+							);
+						})}
+					</tbody>
+				</table>
+			</div>
+
+			<div className="text-center text-xs text-muted-foreground">
+				Showing {rowIndices.length} of {gex.strikes.length} strikes
+				{isWindowed && " around spot"}
+				{gex.strikes.length > WINDOW_SIZE && (
+					<>
+						{" · "}
+						<button
+							type="button"
+							className="underline underline-offset-2"
+							onClick={() => setExpanded((v) => !v)}
+						>
+							{expanded ? "show fewer" : "view all"}
+						</button>
+					</>
+				)}
+			</div>
 		</div>
 	);
 }

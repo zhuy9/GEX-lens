@@ -53,3 +53,15 @@ section 4 and 4.3 for the exact allowed import graph.
 
 - None currently. The PRD's fixed seven-module backend layout already matches
   the global "many small files, high cohesion" guidance.
+
+## Approved PRD deviations
+
+- **GEX heatmap renders as a hand-built HTML/CSS table, not a Plotly
+  `heatmap` trace.** PRD section 9 says "Keep Plotly for the two analytical
+  charts" and M4.8 says "shadcn components + no Recharts"; the table is
+  neither Plotly nor Recharts. Approved by the user on 2026-09-17 because the
+  desired layout (sticky header row + sticky strike column while scrolling,
+  a spot-centered strike window with an expand toggle) needs real DOM/CSS
+  `position: sticky`, which a Plotly-rendered canvas/SVG heatmap can't do.
+  The IV surface is unaffected and still uses Plotly's `surface`/`scatter3d`
+  traces per the PRD.
