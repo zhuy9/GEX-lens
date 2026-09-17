@@ -255,4 +255,18 @@ One more SPY (or QQQ) sample using `money=all` (or the `money` param
 dropped entirely) with a large `limit` (try 1000), `offset=0`, still scoped
 by `fromdate`/`todate`, to confirm the full 0.80x-1.20x strike band appears
 for the first expiration in a single request under the filter combination
-this app will actually ship with.
+this app will actually ship with. **Not yet obtained** — `nasdaq.py`'s
+pagination loop will initially rely on the "All (Moneyness)" filter-label
+evidence rather than an empirical full-band sample; treat this as a residual
+risk to close out before M0 is marked PASS.
+
+### Rejected candidate: `/info` endpoint (do not use)
+
+`GET https://api.nasdaq.com/api/quote/{symbol}/info?assetclass=etf` is a
+**separate** Nasdaq endpoint (`docs/samples/spy-info.jsonc`,
+`docs/samples/qqq-info.jsonc`) returning `primaryData.lastSalePrice`
+(`"$754.05"` for SPY, `"$704.72"` for QQQ — matching `data.lastTrade` from
+the option-chain endpoint exactly, a useful one-time cross-check). **This
+must never be called by `nasdaq.py`.** PRD Section 5.2 explicitly prohibits
+a separate quote/spot endpoint; the underlying price must come only from the
+option-chain response's `data.lastTrade` field.
