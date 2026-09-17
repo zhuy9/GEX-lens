@@ -1,6 +1,7 @@
 """Configuration, provider factory, four routes, orchestration."""
 
 import json
+import logging
 import math
 import threading
 import time
@@ -32,6 +33,8 @@ MAX_CALENDAR_DTE = 60
 MIN_STRIKE_PCT = 0.80
 MAX_STRIKE_PCT = 1.20
 PRICING_TIME_CONVENTION = "16:00 America/New_York on expiration date"
+
+logger = logging.getLogger(__name__)
 
 # Provider error codes with a status other than the 502 default.
 _PROVIDER_ERROR_STATUS = {
@@ -99,6 +102,18 @@ def _error_response(
     body = ErrorResponse(error=ErrorBody(code=code, message=message, retry_after_seconds=retry_after_seconds))
     headers = {"Retry-After": str(retry_after_seconds)} if retry_after_seconds else None
     return JSONResponse(status_code=status_code, content=body.model_dump(mode="json"), headers=headers)
+
+
+def _http_error(
+    status_code: int, code: str, message: str, retry_after_seconds: int | None = None
+) -> HTTPException:
+    """The one place a route builds an HTTPException's dict detail. The
+    global handler below (_http_exception_handler) is this function's
+    exact inverse."""
+    detail: dict = {"code": code, "message": message}
+    if retry_after_seconds is not None:
+        detail["retry_after_seconds"] = retry_after_seconds
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol: str) -> dict:
@@ -184,10 +199,7 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
     def _require_symbol(symbol: str) -> str:
         upper = symbol.upper()
         if upper not in settings.symbols:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "UNSUPPORTED_SYMBOL", "message": f"{symbol!r} is not configured"},
-            )
+            raise _http_error(422, "UNSUPPORTED_SYMBOL", f"{symbol!r} is not configured")
         return upper
 
     @app.exception_handler(HTTPException)
@@ -212,6 +224,10 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
 
     @app.exception_handler(Exception)
     async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        # The one diagnostic boundary for a genuine bug (not an expected
+        # ProviderError/HTTPException, which routes map explicitly below).
+        # Never put the traceback or exc internals in the response itself.
+        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
         return _error_response(500, "INTERNAL_ERROR", "Unexpected failure")
 
     @app.get("/api/health")
@@ -243,9 +259,7 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
         symbol = _require_symbol(symbol)
         dashboard = storage.get_latest_dashboard(settings.db_path, settings.source_mode, symbol)
         if dashboard is None:
-            raise HTTPException(
-                status_code=404, detail={"code": "NO_SNAPSHOT", "message": f"No saved snapshot for {symbol}"}
-            )
+            raise _http_error(404, "NO_SNAPSHOT", f"No saved snapshot for {symbol}")
         return dashboard
 
     @app.post("/api/dashboard/{symbol}/refresh")
@@ -254,18 +268,13 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
         acquired, retry_after = gate.begin()
         if not acquired:
             if retry_after is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "REFRESH_IN_PROGRESS", "message": "A refresh is already running"},
-                )
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "code": "REFRESH_COOLDOWN",
-                    "message": "Refresh is on cooldown",
-                    "retry_after_seconds": retry_after,
-                },
-            )
+                raise _http_error(409, "REFRESH_IN_PROGRESS", "A refresh is already running")
+            raise _http_error(429, "REFRESH_COOLDOWN", "Refresh is on cooldown", retry_after)
+        # Only ProviderError (the adapter's documented failure contract) is
+        # mapped to an HTTP response here. Anything else is a real bug, not
+        # an expected failure -- let it propagate to the one unhandled-
+        # exception handler above, which logs it and returns the same
+        # sanitized 500 envelope this used to build by hand.
         try:
             return _collect_and_save(settings, active_provider, symbol)
         except ProviderError as exc:
@@ -277,20 +286,9 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
                 # discarded in favor of the 300s default.
                 effective = max(retry_after, 60) if retry_after is not None else 300
                 gate.extend_deadline(effective)
-                raise HTTPException(
-                    status_code=503,
-                    detail={"code": exc.code, "message": str(exc), "retry_after_seconds": effective},
-                ) from exc
+                raise _http_error(503, exc.code, str(exc), effective) from exc
             status_code = _PROVIDER_ERROR_STATUS.get(exc.code, 502)
-            raise HTTPException(
-                status_code=status_code, detail={"code": exc.code, "message": str(exc)}
-            ) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                status_code=500, detail={"code": "INTERNAL_ERROR", "message": "Unexpected failure"}
-            ) from exc
+            raise _http_error(status_code, exc.code, str(exc)) from exc
         finally:
             gate.end()
 

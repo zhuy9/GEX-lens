@@ -203,6 +203,41 @@ def test_failed_refresh_still_consumes_cooldown(tmp_path):
     assert stub.calls == 1  # no second provider call
 
 
+def test_unexpected_exception_is_logged_sanitized_and_does_not_leak_internals(tmp_path, caplog):
+    # R09: a genuine bug (not a ProviderError) must still emit a diagnostic
+    # log, release the refresh lock, preserve the previous snapshot, and
+    # never expose the exception's own message to the client.
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    good_stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    first = TestClient(create_app(settings, provider=good_stub)).post("/api/dashboard/SPY/refresh").json()
+
+    failing_stub = StubProvider(error=RuntimeError("boom: leaked secret token abc123"))
+    # raise_server_exceptions=False: a real deployment (uvicorn) returns the
+    # sanitized JSONResponse our Exception handler builds; TestClient's
+    # default instead re-raises the original exception into the test
+    # process for easier debugging. Disable that to observe the actual HTTP
+    # response this path produces.
+    client = TestClient(create_app(settings, provider=failing_stub), raise_server_exceptions=False)
+
+    with caplog.at_level("ERROR"):
+        response = client.post("/api/dashboard/SPY/refresh")
+
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"]["code"] == "INTERNAL_ERROR"
+    assert "boom" not in response.text
+    assert "secret token" not in response.text
+
+    assert any("boom" in record.message or "boom" in (record.exc_text or "") for record in caplog.records)
+
+    # Lock released: the next attempt hits cooldown (429), not "still running" (409).
+    second = client.post("/api/dashboard/SPY/refresh")
+    assert second.status_code == 429
+
+    unchanged = client.get("/api/dashboard/SPY").json()
+    assert unchanged["snapshot_id"] == first["snapshot_id"]
+
+
 def test_provider_rate_limit_extends_cooldown_and_returns_503(tmp_path):
     # M3.7: "a provider 429 extends it according to Section 5.3"
     settings = make_settings(str(tmp_path / "t.duckdb"))
