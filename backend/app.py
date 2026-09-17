@@ -5,6 +5,8 @@ import logging
 import math
 import threading
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
@@ -193,10 +195,22 @@ def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol:
 
 def create_app(settings: Settings, provider: OptionsDataProvider | None = None) -> FastAPI:
     storage.init_schema(settings.db_path)
+    provider_is_owned = provider is None
     active_provider = provider if provider is not None else build_provider(settings)
     gate = RefreshCoordinator(settings.refresh_min_interval_seconds)
 
-    app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        yield
+        # Only close a provider this factory built itself (e.g. NasdaqProvider's
+        # own httpx.Client). An injected provider's client (tests, or a future
+        # caller) belongs to whoever constructed it, not to this app.
+        if provider_is_owned:
+            close = getattr(active_provider, "close", None)
+            if close is not None:
+                close()
+
+    app = FastAPI(lifespan=lifespan)
 
     def _require_symbol(symbol: str) -> str:
         upper = symbol.upper()

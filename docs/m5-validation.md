@@ -2,7 +2,12 @@
 
 Live hand-off validation run against real Nasdaq data, `source_mode="nasdaq"`,
 2026-09-17 (UTC times below). Records the acceptance-test evidence required
-by PRD section 12, M5.
+by PRD section 12, M5. Recorded in commit `7cd7032`, against the application
+code as of that commit's parent; no CI workflow existed yet at that point (one
+was added later — see [.github/workflows/ci.yml](../.github/workflows/ci.yml)
+and its status badge in the project README). A future live-validation pass
+should link both the commit it ran against and that run's actual CI result,
+not only its own manual observations.
 
 ## M5.1 - Automated tests pass without internet access
 
@@ -27,10 +32,16 @@ No Docker, no external database server (DuckDB is an embedded file).
 
 The second SPY refresh ran at 06:28:22Z, 22+ minutes after the first
 (06:05:57Z `refresh_not_before`), well outside the 60-second cooldown.
-It produced a new snapshot ID and a small, expected IV re-solve difference
-(3314 -> 3316 valid IVs) from live quotes moving between requests. No
-`INCOMPLETE_CHAIN`, `INVALID_UNDERLYING_PRICE`, or `COLLECTION_WINDOW_EXCEEDED`
-rejections on any of the four refreshes.
+It produced a new snapshot ID and a small IV re-solve difference (3314 -> 3316
+valid IVs). This snapshot carries `VALUATION_TIME_ASSUMED` (chain_asof was
+null, so `valuation_at` fell back to `collection_started_at`), so each
+contract's `T` also shifted by the ~22 minutes between the two collections,
+independently of whether any quote actually changed. No raw-input comparison
+between the two snapshots was performed, so this difference is recorded as
+observed, not attributed to live quotes moving specifically — that would
+require comparing the underlying bid/ask/OI values directly, which this run
+did not do. No `INCOMPLETE_CHAIN`, `INVALID_UNDERLYING_PRICE`, or
+`COLLECTION_WINDOW_EXCEEDED` rejections on any of the four refreshes.
 
 ## M5.4 - Hand-check five source contracts, reproduce one GEX cell
 

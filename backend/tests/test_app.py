@@ -264,6 +264,45 @@ def test_repeated_fixture_collections_are_ordered_by_recency_not_uuid(tmp_path):
     assert latest["snapshot_id"] == second["snapshot_id"]
 
 
+def test_shutdown_closes_a_self_built_providers_http_client_only(tmp_path, monkeypatch):
+    # R15: NasdaqProvider owns an httpx.Client when build_provider() builds
+    # it (no client was injected). The app must close that client at
+    # shutdown, and must never touch a client an injected/test provider owns.
+    from nasdaq import NasdaqProvider
+
+    close_calls: list[NasdaqProvider] = []
+    original_close = NasdaqProvider.close
+
+    def tracked_close(self: NasdaqProvider) -> None:
+        close_calls.append(self)
+        original_close(self)
+
+    monkeypatch.setattr(NasdaqProvider, "close", tracked_close)
+
+    settings_nasdaq = make_settings(str(tmp_path / "a.duckdb"), source_mode="nasdaq")
+    with TestClient(create_app(settings_nasdaq)):
+        pass  # __exit__ runs the lifespan shutdown phase
+
+    assert len(close_calls) == 1  # build_provider()'s own NasdaqProvider was closed
+    assert close_calls[0]._client.is_closed is True
+
+    class TrackedProvider:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def fetch_chain(self, request):
+            raise AssertionError("not used in this test")
+
+        def close(self) -> None:
+            self.closed = True
+
+    injected = TrackedProvider()
+    settings_fixture = make_settings(str(tmp_path / "b.duckdb"))
+    with TestClient(create_app(settings_fixture, provider=injected)):
+        pass
+    assert injected.closed is False  # app.py must never close an injected provider's client
+
+
 def test_provider_rate_limit_extends_cooldown_and_returns_503(tmp_path):
     # M3.7: "a provider 429 extends it according to Section 5.3"
     settings = make_settings(str(tmp_path / "t.duckdb"))

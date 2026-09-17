@@ -1,5 +1,7 @@
 # GEX Lens
 
+[![CI](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml)
+
 A local, single-user dashboard for options gamma-exposure (GEX) and implied-volatility
 analysis. It fetches one option-chain snapshot per manual refresh, computes IV and
 gamma with Black-Scholes-Merton, and renders two views: a strike-by-expiration GEX
@@ -24,8 +26,10 @@ real Nasdaq data for all three symbols (see
 
 ## Setup
 
-Requires Python 3.12 and Node.js 18+. No Docker and no external database
-server — DuckDB is an embedded file under `backend/data/`.
+Requires Python 3.12 and Node.js 22.12+ (PRD section 4; also what
+[the CI workflow](.github/workflows/ci.yml) installs and validates on every
+push). No Docker and no external database server — DuckDB is an embedded
+file under `backend/data/`.
 
 Commands below are Windows PowerShell, copy-paste ready. macOS/Linux
 equivalents are the same commands with `python3.12` for `py -3.12`,
@@ -52,7 +56,7 @@ it to `"nasdaq"` requires completing your own review of Nasdaq's terms (see
 
 ```powershell
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 

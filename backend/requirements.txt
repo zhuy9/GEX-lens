@@ -5,6 +5,9 @@ pydantic==2.9.2
 numpy==2.1.2
 scipy==1.14.1
 duckdb==1.5.5
+# Not imported directly anywhere in this app (the code uses zoneinfo) --
+# DuckDB's own read_csv(..., TIMESTAMPTZ) path imports pytz internally.
+# Confirmed by testing: removing it breaks storage.py's bulk insert.
 pytz==2026.3.post1
 tzdata==2024.2
 pytest==8.3.3

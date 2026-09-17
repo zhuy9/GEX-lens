@@ -1,5 +1,6 @@
 # Local config and secrets
-.env
+.env*
+!.env.example
 settings.json
 
 # Raw provider samples (Nasdaq ToS-restricted; never redistribute)
@@ -8,6 +9,7 @@ docs/samples/
 # Data and databases
 data/
 *.duckdb
+*.duckdb.wal
 
 # Python
 __pycache__/

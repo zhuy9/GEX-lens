@@ -169,6 +169,13 @@ class NasdaqProvider:
             headers=_HEADERS,
         )
 
+    def close(self) -> None:
+        """Closes the underlying HTTP client. Only meaningful when this
+        provider built its own client (the production path via
+        build_provider()); app.py must not call this on a provider whose
+        client an injected/test caller owns and is responsible for closing."""
+        self._client.close()
+
     def fetch_chain(self, request: ChainRequest) -> ChainSnapshot:
         symbol = request.symbol
         asset_class = ASSET_CLASS.get(symbol)
