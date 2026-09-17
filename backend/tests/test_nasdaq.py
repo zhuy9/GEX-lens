@@ -220,6 +220,75 @@ def test_comma_formatted_values_are_parsed():
     assert call.open_interest == 1234567
 
 
+def test_timeout_raises_upstream_timeout():
+    # M3.3
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.TimeoutException("timed out", request=request)
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "UPSTREAM_TIMEOUT"
+
+
+def test_403_raises_upstream_access_denied():
+    # M3.3
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "forbidden"})
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "UPSTREAM_ACCESS_DENIED"
+
+
+def test_429_raises_upstream_rate_limited_with_retry_after():
+    # M3.3
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "120"}, json={})
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "UPSTREAM_RATE_LIMITED"
+    assert exc_info.value.retry_after_seconds == 120
+
+
+def test_malformed_json_raises_schema_error():
+    # M3.3
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json{{{")
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "SCHEMA_ERROR"
+
+
+def test_exceeding_max_requests_without_finishing_is_incomplete_chain(monkeypatch):
+    # M3.3: pagination that never reaches a short page must fail loudly,
+    # not loop forever or silently truncate.
+    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "MAX_REQUESTS", 3)
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(dict(request.url.params).get("offset", "0"))
+        calls.append(offset)
+        base = 100 + offset  # unique strikes per page; pagination never "finishes"
+        rows = [
+            _data_row("aapl", "260115", f"{base}.00", f"{base * 1000:08d}"),
+            _data_row("aapl", "260115", f"{base + 1}.00", f"{(base + 1) * 1000:08d}"),
+        ]
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "INCOMPLETE_CHAIN"
+    assert calls == [0, 2, 4]
+
+
 def test_unsupported_symbol_rejected_without_http():
     calls = []
 

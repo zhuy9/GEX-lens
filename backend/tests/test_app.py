@@ -1,10 +1,13 @@
+import math
 import threading
 import time
+from datetime import datetime
 
 from conftest import StubProvider, make_settings, make_snapshot
 from fastapi.testclient import TestClient
 
 from app import create_app
+from provider import ProviderError
 
 
 def test_health_check(tmp_path):
@@ -95,3 +98,109 @@ def test_concurrent_refresh_returns_409(tmp_path):
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "REFRESH_IN_PROGRESS"
     assert results == [200]
+
+
+def _assert_all_finite(value) -> None:
+    if isinstance(value, float):
+        assert math.isfinite(value), f"non-finite float found: {value}"
+    elif isinstance(value, dict):
+        for v in value.values():
+            _assert_all_finite(v)
+    elif isinstance(value, list):
+        for v in value:
+            _assert_all_finite(v)
+
+
+def test_dashboard_response_never_contains_nan_or_infinity(tmp_path):
+    # M3.1
+    from fixtures import FixtureProvider
+
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    client = TestClient(create_app(settings, provider=FixtureProvider()))
+
+    response = client.post("/api/dashboard/SPY/refresh")
+    assert response.status_code == 200
+    assert "NaN" not in response.text
+    assert "Infinity" not in response.text
+    _assert_all_finite(response.json())
+
+
+def test_dashboard_spot_provenance_and_internal_consistency(tmp_path):
+    # M3.4
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    dashboard = client.post("/api/dashboard/SPY/refresh").json()
+    assert dashboard["spot_kind"] == "last_trade"
+    assert dashboard["spot_origin"] == "chain_payload"
+    assert dashboard["spot"] == 100.0
+
+    fetched = client.get("/api/dashboard/SPY").json()
+    assert fetched["snapshot_id"] == dashboard["snapshot_id"]
+    assert fetched["valuation_at"] == dashboard["valuation_at"]
+    assert fetched["parameters"] == dashboard["parameters"]
+
+
+def test_get_endpoints_never_call_provider(tmp_path):
+    # M3.6
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    client.get("/api/health")
+    client.get("/api/config")
+    client.get("/api/dashboard/SPY")  # 404, still zero calls
+    client.get("/api/dashboard/MSFT")  # 422, still zero calls
+
+    assert stub.calls == 0
+
+
+def test_rejected_refresh_requests_make_zero_provider_calls(tmp_path):
+    # M3.6
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    client.post("/api/dashboard/MSFT/refresh")  # unsupported symbol
+    assert stub.calls == 0
+
+    client.post("/api/dashboard/SPY/refresh")  # succeeds, consumes cooldown
+    assert stub.calls == 1
+
+    client.post("/api/dashboard/SPY/refresh")  # cooldown active -> 429
+    assert stub.calls == 1  # unchanged
+
+
+def test_failed_refresh_still_consumes_cooldown(tmp_path):
+    # M3.7: "A failed permitted attempt still consumes cooldown"
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(error=ProviderError("UPSTREAM_UNAVAILABLE", "boom"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    first = client.post("/api/dashboard/SPY/refresh")
+    assert first.status_code == 502
+    assert stub.calls == 1
+
+    second = client.post("/api/dashboard/SPY/refresh")
+    assert second.status_code == 429  # cooldown from the failed attempt still applies
+    assert stub.calls == 1  # no second provider call
+
+
+def test_provider_rate_limit_extends_cooldown_and_returns_503(tmp_path):
+    # M3.7: "a provider 429 extends it according to Section 5.3"
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(error=ProviderError("UPSTREAM_RATE_LIMITED", "rate limited", retry_after_seconds=120))
+    client = TestClient(create_app(settings, provider=stub))
+
+    response = client.post("/api/dashboard/SPY/refresh")
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"]["code"] == "UPSTREAM_RATE_LIMITED"
+    assert body["error"]["retry_after_seconds"] == 120
+
+    config = client.get("/api/config").json()
+    not_before = datetime.fromisoformat(config["refresh_not_before"])
+    server_time = datetime.fromisoformat(config["server_time"])
+    # the 120s provider retry_after should win over the 60s baseline cooldown
+    assert (not_before - server_time).total_seconds() > 60

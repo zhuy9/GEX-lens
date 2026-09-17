@@ -1,6 +1,9 @@
 """DuckDB initialization, latest/save/prune; no provider parsing."""
 
+import csv
 import json
+import os
+import tempfile
 import threading
 import uuid
 from datetime import datetime
@@ -13,6 +16,90 @@ from models import PricedQuote
 _LOCK = threading.Lock()
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 _KEEP_LATEST = 20  # PRD section 3: latest 20 snapshots per (source_mode, symbol)
+
+# DuckDB's Python parameter binding (execute/executemany) costs ~0.5ms per
+# bound value -- fine for one row, ruinous for thousands (a 2000-contract
+# refresh would take 15s+, well past PRD 3.5's 5s budget). read_csv is
+# DuckDB's actual bulk-load path and is ~1000x faster for this volume.
+_OPTION_QUOTES_COLUMNS = {
+    "snapshot_id": "UUID",
+    "symbol": "VARCHAR",
+    "expiration": "DATE",
+    "strike": "DECIMAL(18,6)",
+    "option_type": "VARCHAR",
+    "bid": "DOUBLE",
+    "ask": "DOUBLE",
+    "last": "DOUBLE",
+    "volume": "BIGINT",
+    "open_interest": "BIGINT",
+    "multiplier": "INTEGER",
+    "provider_contract_id": "VARCHAR",
+    "quote_asof": "VARCHAR",  # cast to TIMESTAMPTZ in the INSERT SELECT below
+    "mid": "DOUBLE",
+    "iv": "DOUBLE",
+    "gamma": "DOUBLE",
+    "exclusion_reason": "VARCHAR",
+    "flags": "JSON",
+}
+
+
+def _csv_cell(value: object) -> object:
+    if value is None:
+        return ""
+    if isinstance(value, tuple):
+        return json.dumps(list(value))
+    return value
+
+
+def _bulk_insert_option_quotes(
+    conn: duckdb.DuckDBPyConnection, snapshot_id: uuid.UUID, priced_quotes: tuple[PricedQuote, ...]
+) -> None:
+    fd, csv_path = tempfile.mkstemp(suffix=".csv")
+    try:
+        with os.fdopen(fd, "w", newline="") as f:
+            writer = csv.writer(f)
+            for pq in priced_quotes:
+                q = pq.quote
+                writer.writerow(
+                    _csv_cell(v)
+                    for v in (
+                        snapshot_id,
+                        q.symbol,
+                        q.expiration,
+                        q.strike,
+                        q.option_type,
+                        q.bid,
+                        q.ask,
+                        q.last,
+                        q.volume,
+                        q.open_interest,
+                        q.multiplier,
+                        q.provider_contract_id,
+                        q.quote_asof,
+                        pq.mid,
+                        pq.iv,
+                        pq.gamma,
+                        pq.exclusion_reason,
+                        q.flags,
+                    )
+                )
+        columns_sql = ", ".join(
+            f"'{name}': '{sql_type}'" for name, sql_type in _OPTION_QUOTES_COLUMNS.items()
+        )
+        conn.execute(
+            f"""
+            INSERT INTO option_quotes
+            SELECT
+                snapshot_id, symbol, expiration, strike, option_type,
+                bid, ask, last, volume, open_interest, multiplier,
+                provider_contract_id, quote_asof::TIMESTAMPTZ, mid, iv, gamma,
+                exclusion_reason, flags
+            FROM read_csv(?, header=false, columns={{{columns_sql}}})
+            """,
+            [csv_path],
+        )
+    finally:
+        os.unlink(csv_path)
 
 
 def init_schema(db_path: str) -> None:
@@ -79,38 +166,8 @@ def save_snapshot(
                     json.dumps(dashboard_json, default=str),
                 ],
             )
-            for pq in priced_quotes:
-                q = pq.quote
-                conn.execute(
-                    """
-                    INSERT INTO option_quotes (
-                        snapshot_id, symbol, expiration, strike, option_type,
-                        bid, ask, last, volume, open_interest, multiplier,
-                        provider_contract_id, quote_asof, mid, iv, gamma,
-                        exclusion_reason, flags
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        snapshot_id,
-                        q.symbol,
-                        q.expiration,
-                        q.strike,
-                        q.option_type,
-                        q.bid,
-                        q.ask,
-                        q.last,
-                        q.volume,
-                        q.open_interest,
-                        q.multiplier,
-                        q.provider_contract_id,
-                        q.quote_asof,
-                        pq.mid,
-                        pq.iv,
-                        pq.gamma,
-                        pq.exclusion_reason,
-                        json.dumps(list(q.flags)),
-                    ],
-                )
+            if priced_quotes:
+                _bulk_insert_option_quotes(conn, snapshot_id, priced_quotes)
 
             stale = conn.execute(
                 """
