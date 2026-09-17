@@ -1,4 +1,4 @@
-# Project instructions: GEX-lens
+# Project instructions: GEX Lens
 
 Global rules in `~/.claude/CLAUDE.md` apply. This file adds project-specific
 content only.
