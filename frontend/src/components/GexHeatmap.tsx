@@ -9,9 +9,9 @@ interface GexHeatmapProps {
 
 const MILLIONS = 1_000_000;
 const THOUSAND = 1_000;
+const PLOT_HEIGHT_PX = 560; // fixed: keeps the x-axis pinned at a constant position
 const ROW_HEIGHT_PX = 20; // minimum per-strike height for readable y-axis labels
-const CHART_CHROME_PX = 100; // x-axis labels + margins
-const MIN_HEIGHT_PX = 384;
+const CHART_CHROME_PX = 130; // x-axis labels + margins
 
 function fmtMillions(value: number | null): string {
 	if (value === null) return "Unknown";
@@ -101,13 +101,18 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 		);
 	}
 
-	const plotHeight = Math.max(
-		MIN_HEIGHT_PX,
-		gex.strikes.length * ROW_HEIGHT_PX + CHART_CHROME_PX,
+	// Show only as many strikes as fit at a readable row height; the rest are
+	// reachable by dragging (dragmode "pan") without the x-axis ever moving,
+	// since the plot's own height stays fixed.
+	const visibleRows = Math.max(
+		1,
+		Math.floor((PLOT_HEIGHT_PX - CHART_CHROME_PX) / ROW_HEIGHT_PX),
 	);
+	const yaxisRange: [number, number] | undefined =
+		gex.strikes.length > visibleRows ? [-0.5, visibleRows - 0.5] : undefined;
 
 	return (
-		<div style={{ height: plotHeight }}>
+		<div style={{ height: PLOT_HEIGHT_PX }}>
 			<Plot
 				data={[
 					{
@@ -132,9 +137,14 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 				]}
 				layout={{
 					autosize: true,
+					dragmode: "pan",
 					margin: { l: 90, r: 20, t: 20, b: 60 },
 					xaxis: { title: { text: "Expiration" }, type: "category" },
-					yaxis: { title: { text: "Strike" }, type: "category" },
+					yaxis: {
+						title: { text: "Strike" },
+						type: "category",
+						range: yaxisRange,
+					},
 				}}
 				style={{ width: "100%", height: "100%" }}
 				useResizeHandler
