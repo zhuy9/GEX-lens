@@ -123,6 +123,52 @@ describe("manual refresh", () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(postCallCount(fetchMock)).toBe(1); // no automatic retry
 	});
+
+	it("R04: a slower initial GET cannot overwrite a faster refresh POST for the same symbol", async () => {
+		const staleGetResult = makeDashboard({
+			snapshot_id: "stale-get",
+			spot: 999,
+		});
+		const refreshedResult = makeDashboard({
+			snapshot_id: "fresh-post",
+			spot: 123,
+		});
+		let releaseInitialGet: (() => void) | undefined;
+
+		const fetchMock = vi.fn(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				if (url.endsWith("/api/config")) return jsonResponse(200, makeConfig());
+				if (url.endsWith("/api/dashboard/SPY") && init?.method !== "POST") {
+					// Stays pending until explicitly released, simulating a GET
+					// that started before Refresh was clicked but resolves after.
+					return new Promise<Response>((resolve) => {
+						releaseInitialGet = () =>
+							resolve(jsonResponse(200, staleGetResult));
+					});
+				}
+				if (url.endsWith("/api/dashboard/SPY/refresh")) {
+					return jsonResponse(200, refreshedResult);
+				}
+				throw new Error(`Unhandled: ${url}`);
+			},
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const user = userEvent.setup();
+		render(<App />);
+
+		const button = await screen.findByRole("button", { name: /^refresh$/i });
+		await user.click(button);
+		await screen.findByText("$123.00"); // the POST's result is shown
+
+		// Now let the slower, earlier GET resolve with stale data.
+		releaseInitialGet?.();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(screen.getByText("$123.00")).toBeInTheDocument();
+		expect(screen.queryByText("$999.00")).not.toBeInTheDocument();
+	});
 });
 
 describe("GEX mode", () => {

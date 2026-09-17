@@ -27,9 +27,13 @@ export default function App() {
 	const [gexMode, setGexMode] = useState<GexMode>("signed");
 	const tick = useTick();
 
-	const handleRefreshSettled = useCallback(() => {
-		void reloadConfig();
-	}, [reloadConfig]);
+	// Returned (not fire-and-forgotten) so useDashboard can stay "refreshing"
+	// until this reconciliation GET actually lands (R04): otherwise the
+	// button re-enables before the updated cooldown is reflected.
+	const handleRefreshSettled = useCallback(
+		() => reloadConfig(),
+		[reloadConfig],
+	);
 
 	const { dashboard, status, refreshing, refreshError, refresh } = useDashboard(
 		symbol ?? "",
