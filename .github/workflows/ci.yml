@@ -1,0 +1,56 @@
+name: CI
+
+# No live market-data access occurs here: every backend test either uses
+# FixtureProvider (zero HTTP) or mocks Nasdaq via httpx.MockTransport
+# (backend/tests/test_nasdaq.py). nasdaq.py is never imported outside a few
+# explicitly-marked tests, enforced by backend/tests/test_provider_boundary.py.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # PRD section 4
+      - name: Install dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Lint (ruff)
+        working-directory: backend
+        run: ruff check .
+      - name: Type check (ty)
+        working-directory: backend
+        run: ty check .
+      - name: Test
+        working-directory: backend
+        # test_performance.py's timings are hardware-sensitive and reported
+        # separately (see its own comments for the measuring machine); this
+        # keeps functional pass/fail here independent of runner performance.
+        run: pytest --ignore=tests/test_performance.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.12" # PRD section 4: Node 22.x, at least 22.12
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Lint (biome)
+        working-directory: frontend
+        run: npm run lint
+      - name: Type check + build
+        working-directory: frontend
+        run: npm run build
+      - name: Test
+        working-directory: frontend
+        run: npm test

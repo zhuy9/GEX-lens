@@ -76,9 +76,11 @@ def test_concurrent_refresh_returns_409(tmp_path):
     # M3.2
     settings = make_settings(str(tmp_path / "t.duckdb"))
     release = threading.Event()
+    entered = threading.Event()  # R14: signaled, not guessed at via sleep
 
     class SlowProvider:
         def fetch_chain(self, request):
+            entered.set()
             release.wait(timeout=5)
             return make_snapshot(provider_id="fixture")
 
@@ -90,7 +92,7 @@ def test_concurrent_refresh_returns_409(tmp_path):
 
     thread = threading.Thread(target=run)
     thread.start()
-    time.sleep(0.2)  # let the thread acquire the refresh lock and block
+    assert entered.wait(timeout=5)  # the first request has acquired the refresh lock
 
     second = client.post("/api/dashboard/SPY/refresh")
     release.set()

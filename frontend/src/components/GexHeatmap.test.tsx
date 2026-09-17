@@ -1,4 +1,5 @@
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GexCell, GexData } from "@/types";
 import { GexHeatmap } from "./GexHeatmap";
@@ -76,6 +77,101 @@ describe("R10: no usable GEX data is distinguished from no axes", () => {
 		expect(
 			screen.queryByText(/no complete gex cells for this mode/i),
 		).not.toBeInTheDocument();
+	});
+});
+
+describe("R14: spot divider row", () => {
+	it("appears between the two strikes bracketing the exact underlying price", () => {
+		const gex = makeGex({
+			strikes: ["95.0", "100.0", "105.0"],
+			cells: [[COMPLETE_CELL, COMPLETE_CELL, COMPLETE_CELL]],
+		});
+		render(
+			<GexHeatmap
+				gex={gex}
+				mode="signed"
+				spot={101}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+
+		const rows = screen.getAllByRole("row");
+		const rowText = rows.map((r) => r.textContent ?? "");
+		const spotIndex = rowText.findIndex((t) =>
+			t.includes("Underlying $101.00"),
+		);
+		const idx105 = rowText.findIndex((t) => t.startsWith("$105"));
+		const idx100 = rowText.findIndex((t) => t.startsWith("$100"));
+
+		expect(spotIndex).toBeGreaterThan(-1);
+		expect(idx105).toBeLessThan(spotIndex); // higher strike stays above the divider
+		expect(spotIndex).toBeLessThan(idx100); // lower strike stays below it
+	});
+});
+
+describe("R14: expand/collapse the strike window", () => {
+	function makeManyStrikesGex(): GexData {
+		const strikes = Array.from({ length: 25 }, (_, i) => `${90 + i}.0`);
+		const cells = [strikes.map(() => COMPLETE_CELL)];
+		return { strikes, expirations: ["2026-09-18"], cells };
+	}
+
+	it("shows a windowed subset by default, and all strikes after Expand", async () => {
+		const user = userEvent.setup();
+		render(
+			<GexHeatmap
+				gex={makeManyStrikesGex()}
+				mode="signed"
+				spot={100}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+
+		expect(
+			screen.getByText(/showing 17 of 25 strikes around spot/i),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: /expand \(25 strikes\)/i }),
+		).toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("button", { name: /expand \(25 strikes\)/i }),
+		);
+
+		expect(screen.getByText(/showing 25 of 25 strikes/i)).toBeInTheDocument();
+		expect(screen.queryByText(/around spot/i)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: /^collapse$/i }),
+		).toBeInTheDocument();
+	});
+});
+
+describe("R14: both GEX color modes", () => {
+	it("signed mode shows put-heavy/call-heavy endpoints", () => {
+		render(
+			<GexHeatmap
+				gex={makeGex()}
+				mode="signed"
+				spot={100}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+		expect(screen.getByText(/Put-heavy/)).toBeInTheDocument();
+		expect(screen.getByText(/Call-heavy/)).toBeInTheDocument();
+	});
+
+	it("gross mode shows a $0-to-high nonnegative scale instead", () => {
+		render(
+			<GexHeatmap
+				gex={makeGex()}
+				mode="gross"
+				spot={100}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+		expect(screen.queryByText(/Put-heavy/)).not.toBeInTheDocument();
+		expect(screen.getByText("$0")).toBeInTheDocument();
+		expect(screen.getByText(/High \(\$320K\)/)).toBeInTheDocument();
 	});
 });
 
