@@ -12,6 +12,8 @@ This is a personal research tool, not a trading system. See
 [docs/options_analytics_mvp_prd.md](docs/options_analytics_mvp_prd.md) for the full
 product requirements.
 
+![GEX heatmap](docs/screenshots/gex-heatmap.png)
+
 ## Stack
 
 - Frontend: React, TypeScript, Vite, shadcn/ui, Tailwind CSS, Plotly.js
