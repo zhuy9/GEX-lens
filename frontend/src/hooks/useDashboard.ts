@@ -22,7 +22,7 @@ export interface UseDashboardResult {
 	loadError: string | null;
 	refreshing: boolean;
 	refreshError: ApiErrorBody | null;
-	refresh: () => Promise<void>;
+	refresh: (options?: { forceReferenceRefresh?: boolean }) => Promise<void>;
 	/** Retries the saved-dashboard GET only; never issues a POST. */
 	retryLoad: () => void;
 }
@@ -91,41 +91,46 @@ export function useDashboard(
 		setReloadTick((t) => t + 1);
 	}, []);
 
-	const refresh = useCallback(async () => {
-		const generation = ++generationRef.current;
-		loadAbortRef.current?.abort(); // optimization only; the generation check is the real guard
-		setRefreshing(true);
-		setRefreshError(null);
-		try {
-			const result = await postRefresh(symbol);
-			if (generationRef.current === generation) {
-				setDashboard(result);
-				setStatus("ready");
+	const refresh = useCallback(
+		async (options?: { forceReferenceRefresh?: boolean }) => {
+			const generation = ++generationRef.current;
+			loadAbortRef.current?.abort(); // optimization only; the generation check is the real guard
+			setRefreshing(true);
+			setRefreshError(null);
+			try {
+				const result = await postRefresh(symbol, {
+					forceReferenceRefresh: options?.forceReferenceRefresh,
+				});
+				if (generationRef.current === generation) {
+					setDashboard(result);
+					setStatus("ready");
+				}
+			} catch (error) {
+				if (generationRef.current === generation) {
+					const body: ApiErrorBody =
+						error instanceof ApiError
+							? {
+									code: error.code,
+									message: error.message,
+									retry_after_seconds: error.retryAfterSeconds,
+								}
+							: {
+									code: "UNKNOWN",
+									message: "Refresh failed.",
+									retry_after_seconds: null,
+								};
+					setRefreshError(body);
+				}
+			} finally {
+				// Stay "refreshing" through the post-refresh config reconciliation
+				// (the one GET that carries the updated cooldown), so a second
+				// click can't slip in before the server's real state is reflected.
+				await onRefreshSettled();
+				setRefreshing(false);
 			}
-		} catch (error) {
-			if (generationRef.current === generation) {
-				const body: ApiErrorBody =
-					error instanceof ApiError
-						? {
-								code: error.code,
-								message: error.message,
-								retry_after_seconds: error.retryAfterSeconds,
-							}
-						: {
-								code: "UNKNOWN",
-								message: "Refresh failed.",
-								retry_after_seconds: null,
-							};
-				setRefreshError(body);
-			}
-		} finally {
-			// Stay "refreshing" through the post-refresh config reconciliation
-			// (the one GET that carries the updated cooldown), so a second
-			// click can't slip in before the server's real state is reflected.
-			await onRefreshSettled();
-			setRefreshing(false);
-		}
-	}, [symbol, onRefreshSettled]);
+		},
+		[symbol, onRefreshSettled],
+	);
 
 	return {
 		dashboard,

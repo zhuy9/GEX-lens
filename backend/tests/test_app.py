@@ -1,8 +1,11 @@
+import json
 import math
 import threading
 import time
-from datetime import datetime
+import uuid
+from datetime import UTC, datetime
 
+import pytest
 from conftest import StubProvider, make_settings, make_snapshot
 from fastapi.testclient import TestClient
 
@@ -248,16 +251,24 @@ def test_repeated_fixture_collections_are_ordered_by_recency_not_uuid(tmp_path):
     # as "older" than an earlier one. Calls the orchestration function
     # directly since the refresh route's cooldown (irrelevant to this
     # storage-ordering question) would otherwise block the second call.
-    from app import _collect_and_save
+    from app import _collect_and_save, build_dividend_provider, build_rate_provider
     from fixtures import FixtureProvider
 
     settings = make_settings(str(tmp_path / "t.duckdb"))
     storage.init_schema(settings.db_path)
     provider = FixtureProvider()
+    rate_provider = build_rate_provider(settings.rate_source)
+    dividend_providers = {
+        symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in settings.symbols
+    }
 
-    first = _collect_and_save(settings, provider, "SPY")
+    first = _collect_and_save(
+        settings, provider, rate_provider, dividend_providers, "SPY", force_reference_refresh=False
+    )
     time.sleep(0.01)
-    second = _collect_and_save(settings, provider, "SPY")
+    second = _collect_and_save(
+        settings, provider, rate_provider, dividend_providers, "SPY", force_reference_refresh=False
+    )
     assert first["snapshot_id"] != second["snapshot_id"]
 
     latest = storage.get_latest_dashboard(settings.db_path, settings.source_mode, "SPY")
@@ -344,3 +355,146 @@ def test_missing_retry_after_falls_back_to_300(tmp_path):
     response = client.post("/api/dashboard/SPY/refresh")
     assert response.status_code == 503
     assert response.json()["error"]["retry_after_seconds"] == 300
+
+
+# --- ADR-0001 M4: schema-version-2 dashboards ------------------------------
+
+
+def test_v2_dashboard_carries_provenance_hashes_and_model_identifiers(tmp_path):
+    # M4.1
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    dashboard = client.post("/api/dashboard/SPY/refresh").json()
+    assert dashboard["schema_version"] == 2
+    assert dashboard["instrument"] == {
+        "symbol": "SPY",
+        "instrument_class": "etf",
+        "currency": "USD",
+        "exercise_style": "american",
+        "standard_multiplier": 100,
+    }
+    assert dashboard["parameters"]["model_id"] == "cash_pv_bsm_v2"
+    assert dashboard["parameters"]["algorithm_version"] == "2"
+    assert dashboard["parameters"]["dividend_model"] == "cash_schedule"
+    assert dashboard["parameters"]["q"] == 0.0
+    assert dashboard["market_inputs"]["rate"]["source_provider_id"] == "fixture"
+    assert dashboard["market_inputs"]["dividend_schedule"]["review"]["symbol"] == "SPY"
+    assert len(dashboard["market_inputs"]["reference_bundle_hash"]) == 64
+    assert len(dashboard["calculation_input_hash"]) == 64
+    assert dashboard["pricing_contexts"]  # at least one in-scope expiry
+    assert dashboard["gex"]["canonical_unit"] == "usd_delta_notional_per_1pct"
+
+
+def test_v2_dashboard_never_exposes_a_raw_reference_payload(tmp_path):
+    # M4.7
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    dashboard = client.post("/api/dashboard/SPY/refresh").json()
+    assert "raw_payload_json" not in json.dumps(dashboard)
+
+
+def test_v1_saved_row_is_returned_unchanged_never_upgraded(tmp_path):
+    # M4.2: a v1 database opens without destructive migration; GET preserves
+    # its saved values verbatim, and a new refresh still writes v2 alongside it.
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    v1_dashboard = {
+        "schema_version": 1,
+        "snapshot_id": str(uuid.uuid4()),
+        "symbol": "SPY",
+        "source_mode": "fixture",
+        "collected_at": "2025-01-01T00:00:00Z",
+        "valuation_at": "2025-01-01T00:00:00Z",
+        "chain_asof": "2025-01-01T00:00:00Z",
+        "spot_asof": None,
+        "oi_asof": None,
+        "spot": 100.0,
+        "spot_kind": "last_trade",
+        "spot_origin": "chain_payload",
+        "parameters": {
+            "r": 0.04,
+            "q": 0.0,
+            "multiplier_assumed": False,
+            "min_calendar_dte": 1,
+            "max_calendar_dte": 60,
+            "min_strike_pct": 0.8,
+            "max_strike_pct": 1.2,
+            "pricing_time_convention": "16:00 America/New_York on expiration date",
+            "algorithm_version": "1",
+        },
+        "warnings": [],
+        "quality": {
+            "source_rows": 0,
+            "normalized_contracts": 0,
+            "in_scope_contracts": 0,
+            "valid_ivs": 0,
+            "known_oi_contracts": 0,
+            "complete_gex_cells": 0,
+            "exclusion_counts": {},
+        },
+        "gex": {"strikes": [], "expirations": [], "cells": []},
+        "surface": {
+            "status": "INSUFFICIENT_DATA",
+            "k": [],
+            "expirations": [],
+            "dte": [],
+            "iv": None,
+            "observations": [],
+        },
+    }
+    storage.save_snapshot(
+        db_path,
+        source_mode="fixture",
+        symbol="SPY",
+        snapshot_id=uuid.UUID(v1_dashboard["snapshot_id"]),
+        collected_at=datetime(2025, 1, 1, tzinfo=UTC),
+        valuation_at=datetime(2025, 1, 1, tzinfo=UTC),
+        raw_payload_json="{}",
+        dashboard_json=v1_dashboard,
+        priced_quotes=(),
+    )
+
+    settings = make_settings(db_path)
+    client = TestClient(create_app(settings, provider=StubProvider()))
+    fetched = client.get("/api/dashboard/SPY").json()
+    assert fetched == v1_dashboard  # byte-for-byte: never reconstructed or upgraded on read
+
+
+def test_force_reference_refresh_param_does_not_bypass_the_cooldown_gate(tmp_path):
+    # M2.4/M4.6: the flag bypasses reference-input TTL only, never the
+    # global refresh lock/cooldown.
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    first = client.post("/api/dashboard/SPY/refresh?force_reference_refresh=true")
+    assert first.status_code == 200
+
+    second = client.post("/api/dashboard/SPY/refresh?force_reference_refresh=true")
+    assert second.status_code == 429
+    assert second.json()["error"]["code"] == "REFRESH_COOLDOWN"
+
+
+def test_old_config_schema_raises_a_clear_migration_error(tmp_path):
+    from app import _load_settings
+
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "source_mode": "fixture",
+                "db_path": "data/x.duckdb",
+                "symbols": ["SPY"],
+                "default_symbol": "SPY",
+                "refresh_min_interval_seconds": 60,
+                "risk_free_rate": 0.04,
+                "dividend_yields": {"SPY": 0.0},
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="pre-ADR-0001"):
+        _load_settings(path)

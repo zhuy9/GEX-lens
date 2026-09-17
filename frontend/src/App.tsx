@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { ChartErrorBoundary } from "@/components/ChartErrorBoundary";
 import { GexHeatmap } from "@/components/GexHeatmap";
+import { PricingInputsPanel } from "@/components/PricingInputsPanel";
 import { SnapshotMeta } from "@/components/SnapshotMeta";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -188,11 +189,18 @@ export default function App() {
 						<CardHeader>
 							<CardTitle>Snapshot</CardTitle>
 						</CardHeader>
-						<CardContent>
+						<CardContent className="flex flex-col gap-3">
 							<SnapshotMeta
 								dashboard={dashboard}
 								offsetMs={serverOffsetMs}
 								tick={tick}
+							/>
+							<PricingInputsPanel
+								dashboard={dashboard}
+								onForceRefresh={() =>
+									void refresh({ forceReferenceRefresh: true })
+								}
+								disabled={refreshButtonDisabled}
 							/>
 						</CardContent>
 					</Card>

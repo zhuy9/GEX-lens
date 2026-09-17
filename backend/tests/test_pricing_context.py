@@ -241,6 +241,31 @@ def test_unknown_payment_date_discounts_to_ex_at_with_a_warning():
     assert "DIVIDEND_PAYMENT_TIME_ASSUMED_AT_EX" in context.warnings
 
 
+def test_ex_date_within_seven_days_is_flagged_near_ex_dividend():
+    # Section 9.5: a modeling caution, not a trade/exercise signal.
+    event = make_dividend(ex_date="2026-01-03")  # 2 days after VALUATION_AT (Jan 1)
+    context = build_expiry_pricing_context(
+        expiration=date(2026, 1, 31),
+        valuation_at=VALUATION_AT,
+        actual_spot=100.0,
+        r_cc=0.04,
+        dividend_events=(event,),
+    )
+    assert "NEAR_EX_DIVIDEND" in context.warnings
+
+
+def test_ex_date_beyond_seven_days_is_not_flagged_near_ex_dividend():
+    event = make_dividend(ex_date="2026-01-20")  # far beyond the 7-day window
+    context = build_expiry_pricing_context(
+        expiration=date(2026, 1, 31),
+        valuation_at=VALUATION_AT,
+        actual_spot=100.0,
+        r_cc=0.04,
+        dividend_events=(event,),
+    )
+    assert "NEAR_EX_DIVIDEND" not in context.warnings
+
+
 def test_payment_date_before_ex_date_is_rejected_at_construction():
     with pytest.raises(ValidationError):
         make_dividend(ex_date="2026-01-10", payment_date="2026-01-05")

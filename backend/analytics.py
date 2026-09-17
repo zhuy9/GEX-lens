@@ -1,7 +1,7 @@
 """Pure quote filters, BSM, IV, gamma, GEX, surface."""
 
 import math
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import NamedTuple
 
@@ -34,6 +34,7 @@ MIN_MID = 0.05
 MAX_RELATIVE_SPREAD = 0.50
 MODEL_BOUNDS_TOLERANCE = 1e-8
 MIN_TIME_VALUE = 0.01
+NEAR_EX_DIVIDEND_DAYS = 7
 # Strike scope is not defined here: app.py owns the one MIN/MAX_STRIKE_PCT
 # constant (it also reports the value as policy in ConfigResponse/
 # Parameters) and passes it into price_quote/analyze_snapshot below, so the
@@ -270,6 +271,13 @@ def build_expiry_pricing_context(
         )
         if alignment_warning is not None and alignment_warning not in warnings:
             warnings.append(alignment_warning)
+
+        # Section 9.5: a modeling caution, not a trade/exercise signal.
+        if (
+            ex_at - valuation_at <= timedelta(days=NEAR_EX_DIVIDEND_DAYS)
+            and "NEAR_EX_DIVIDEND" not in warnings
+        ):
+            warnings.append("NEAR_EX_DIVIDEND")
 
         payment_date = event.payment_date
         if payment_date is not None:

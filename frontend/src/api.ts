@@ -86,10 +86,13 @@ export async function getDashboard(
 
 export function postRefresh(
 	symbol: string,
-	signal?: AbortSignal,
+	options?: { forceReferenceRefresh?: boolean; signal?: AbortSignal },
 ): Promise<DashboardResponse> {
-	return request<DashboardResponse>(`/api/dashboard/${symbol}/refresh`, {
-		method: "POST",
-		signal,
-	});
+	const query = options?.forceReferenceRefresh
+		? "?force_reference_refresh=true"
+		: "";
+	return request<DashboardResponse>(
+		`/api/dashboard/${symbol}/refresh${query}`,
+		{ method: "POST", signal: options?.signal },
+	);
 }

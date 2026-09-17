@@ -20,6 +20,7 @@ const COMPLETE_CELL: GexCell = {
 
 function makeGex(overrides: Partial<GexData> = {}): GexData {
 	return {
+		canonical_unit: "usd_delta_notional_per_1pct",
 		strikes: ["100.0"],
 		expirations: ["2026-09-18"],
 		cells: [[COMPLETE_CELL]],
@@ -117,7 +118,7 @@ describe("R14: expand/collapse the strike window", () => {
 	function makeManyStrikesGex(): GexData {
 		const strikes = Array.from({ length: 25 }, (_, i) => `${90 + i}.0`);
 		const cells = [strikes.map(() => COMPLETE_CELL)];
-		return { strikes, expirations: ["2026-09-18"], cells };
+		return makeGex({ strikes, expirations: ["2026-09-18"], cells });
 	}
 
 	it("shows a windowed subset by default, and all strikes after Expand", async () => {

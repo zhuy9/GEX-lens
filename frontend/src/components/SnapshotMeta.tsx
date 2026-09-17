@@ -22,6 +22,16 @@ const WARNING_TEXT: Record<string, string> = {
 		"Chain and underlying-price timestamp alignment could not be established.",
 	UNDERLYING_PRICE_CHANGED_DURING_COLLECTION:
 		"The underlying price changed on a later page during collection; the first page price was kept.",
+	NEAR_EX_DIVIDEND:
+		"An included ex-date falls within the next 7 days -- a modeling caution, not a trade signal.",
+	DIVIDEND_PAYMENT_TIME_ASSUMED_AT_EX:
+		"A payment date is unknown for at least one event; discounted to its ex-date instead.",
+	DIVIDEND_ALIGNMENT_UNVERIFIED:
+		"The underlying price's timing relative to an ex-date could not be verified.",
+	DIVIDEND_ESTIMATE_REPLACED:
+		"A source-reported amount replaced an earlier estimate for at least one event.",
+	DIVIDEND_AMOUNT_ESTIMATED:
+		"At least one event's amount is an estimate, not a source-confirmed figure.",
 };
 
 function formatTimestamp(value: string | null): string {

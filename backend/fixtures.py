@@ -28,9 +28,9 @@ FIXTURE_REVIEW_COVERAGE_DAYS = 90
 
 # spot price, flat-vol assumption, and dividend yield used only to synthesize
 # plausible bid/ask around a BSM mid. Not read from settings.json -- q=0.0
-# here matches settings.example.json's dividend_yields so the shipped fixture
-# demo is a consistent known-volatility scenario: analyze_snapshot re-prices
-# with the same q it was generated under, not a different one (R11).
+# matches FixtureDividendProvider's empty schedule so the shipped fixture
+# demo is a consistent known-volatility scenario: analyze_snapshot_v2
+# re-prices with the same (zero) dividend PV it was generated under (R11).
 _SYMBOL_DATA = {
     "SPY": {"spot": 550.00, "sigma": 0.16, "q": 0.0},
     "QQQ": {"spot": 480.00, "sigma": 0.20, "q": 0.0},
@@ -173,14 +173,16 @@ class FixtureProvider:
         )
 
 
-def fixture_schedule_review(symbol: str) -> ScheduleReview:
-    """Synthetic reviewed schedule with no expected events (Section 8.2:
-    fixture inputs use the fixture valuation clock for economic/review-age
-    dates, not the real wall clock)."""
-    today = ny_local_date(FIXED_VALUATION_AT)
+def fixture_schedule_review(symbol: str, valuation_at: datetime = FIXED_VALUATION_AT) -> ScheduleReview:
+    """Synthetic reviewed schedule with no expected events, freshly
+    "reviewed" at valuation_at itself so it never goes stale regardless of
+    which synthetic/stub clock a caller's own snapshot happens to use
+    (Section 8.2: fixture inputs use a synthetic economic clock for
+    review-age dates, not the real wall clock)."""
+    today = ny_local_date(valuation_at)
     return ScheduleReview(
         symbol=symbol,
-        reviewed_at=FIXED_VALUATION_AT,
+        reviewed_at=valuation_at,
         coverage_start=today,
         coverage_end=today + timedelta(days=FIXTURE_REVIEW_COVERAGE_DAYS),
         no_other_events_expected=True,

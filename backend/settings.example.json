@@ -4,6 +4,8 @@
   "symbols": ["SPY", "QQQ", "AAPL"],
   "default_symbol": "SPY",
   "refresh_min_interval_seconds": 60,
-  "risk_free_rate": 0.04,
-  "dividend_yields": {"SPY": 0.0, "QQQ": 0.0, "AAPL": 0.0}
+  "pricing_model": "cash_pv_bsm_v2",
+  "rate_source": "fixture",
+  "dividend_sources": {"SPY": "fixture", "QQQ": "fixture", "AAPL": "fixture"},
+  "reference_inputs_path": "reference_inputs.json"
 }

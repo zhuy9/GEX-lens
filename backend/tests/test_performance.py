@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import storage
 from analytics import analyze_snapshot, bsm_price, year_fraction
-from models import ALGORITHM_VERSION, DashboardResponse, OptionQuote, Parameters
+from models import ALGORITHM_VERSION, DashboardResponseV1, OptionQuote, Parameters
 
 VALUATION_AT = datetime(2026, 1, 1, tzinfo=UTC)
 SPOT = 100.0
@@ -76,10 +76,10 @@ def test_processing_and_persistence_p95_under_5_seconds(tmp_path, capsys):
             max_strike_pct=1.20,
             source_row_count=1000,
         )
-        # A real DashboardResponse, not a placeholder -- persistence timing
+        # A real DashboardResponseV1, not a placeholder -- persistence timing
         # should reflect the actual payload shape/size the refresh route
         # saves (the full GEX/surface grids), not an unrelated small dict.
-        dashboard = DashboardResponse(
+        dashboard = DashboardResponseV1(
             schema_version=1,
             snapshot_id=uuid4(),
             symbol="SPY",

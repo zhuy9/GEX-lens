@@ -427,8 +427,14 @@ class Settings(BaseModel):
     symbols: tuple[str, ...]
     default_symbol: str
     refresh_min_interval_seconds: int
-    risk_free_rate: float
-    dividend_yields: dict[str, float]
+    # ADR-0001 Section 5.2: replaces the old flat risk_free_rate/
+    # dividend_yields. pricing_model/rate_source are plain strings for the
+    # same reason source_mode is (PRD 4.3): a test may inject any resolver
+    # under any configured identity.
+    pricing_model: str
+    rate_source: str
+    dividend_sources: dict[str, str]
+    reference_inputs_path: str
 
     @field_validator("symbols")
     @classmethod
@@ -449,22 +455,12 @@ class Settings(BaseModel):
             raise ValueError("refresh_min_interval_seconds must be >= 60")
         return v
 
-    @field_validator("risk_free_rate")
-    @classmethod
-    def _validate_r(cls, v: float) -> float:
-        if not (-0.10 <= v <= 0.50):
-            raise ValueError("risk_free_rate must be within [-0.10, 0.50]")
-        return v
-
     @model_validator(mode="after")
     def _validate_cross_fields(self) -> Settings:
         if self.default_symbol not in self.symbols:
             raise ValueError("default_symbol must be one of symbols")
-        if set(self.dividend_yields.keys()) != set(self.symbols):
-            raise ValueError("dividend_yields keys must exactly match symbols")
-        for sym, q in self.dividend_yields.items():
-            if not (0 <= q <= 0.50):
-                raise ValueError(f"dividend yield for {sym!r} must be within [0, 0.50]")
+        if set(self.dividend_sources.keys()) != set(self.symbols):
+            raise ValueError("dividend_sources keys must exactly match symbols")
         return self
 
 
@@ -485,11 +481,14 @@ class ErrorResponse(BaseModel):
 class ConfigResponse(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    config_schema_version: Literal[2] = 2
     symbols: tuple[str, ...]
     default_symbol: str
     source_mode: str
-    risk_free_rate: float
-    dividend_yields: dict[str, float]
+    pricing_model: str
+    rate_source: str
+    dividend_sources: dict[str, str]
+    default_move_unit: Literal["per_1pct"] = "per_1pct"
     min_calendar_dte: int
     max_calendar_dte: int
     min_strike_pct: float
@@ -502,6 +501,8 @@ class ConfigResponse(BaseModel):
 
 
 class Parameters(BaseModel):
+    """Legacy (schema-version-1) pricing parameters."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     r: float
@@ -513,6 +514,32 @@ class Parameters(BaseModel):
     max_strike_pct: float
     pricing_time_convention: str
     algorithm_version: str
+
+
+class ParametersV2(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    r: float
+    q: float
+    multiplier_assumed: bool
+    min_calendar_dte: int
+    max_calendar_dte: int
+    min_strike_pct: float
+    max_strike_pct: float
+    pricing_time_convention: str
+    algorithm_version: Literal["2"] = "2"
+    model_id: Literal["cash_pv_bsm_v2"] = "cash_pv_bsm_v2"
+    dividend_model: Literal["cash_schedule"] = "cash_schedule"
+
+
+class Instrument(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    symbol: str
+    instrument_class: Literal["equity", "etf"]
+    currency: Literal["USD"] = "USD"
+    exercise_style: Literal["american"] = "american"
+    standard_multiplier: int = 100
 
 
 class QualityCounts(BaseModel):
@@ -544,6 +571,10 @@ class GexCell(BaseModel):
 class GexData(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # Section 10: shared by v1 and v2 -- the legacy contract's exposure
+    # fields are already per-1%-move dollars, so this is the same unit
+    # under both schema versions, not a v2-only addition.
+    canonical_unit: Literal["usd_delta_notional_per_1pct"] = "usd_delta_notional_per_1pct"
     strikes: tuple[Decimal, ...]
     expirations: tuple[date, ...]
     cells: tuple[tuple[GexCell | None, ...], ...]
@@ -570,7 +601,10 @@ class SurfaceData(BaseModel):
     observations: tuple[SurfaceObservation, ...]
 
 
-class DashboardResponse(BaseModel):
+class DashboardResponseV1(BaseModel):
+    """Legacy continuous-yield dashboard. A GET returns a saved v1 row
+    unchanged -- never reconstructed, upgraded, or recomputed on read."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_version: Literal[1] = 1
@@ -590,6 +624,41 @@ class DashboardResponse(BaseModel):
     quality: QualityCounts
     gex: GexData
     surface: SurfaceData
+
+    @field_validator("collected_at", "valuation_at", "chain_asof", "spot_asof")
+    @classmethod
+    def _datetimes_aware(cls, v: datetime | None) -> datetime | None:
+        return _require_aware(v)
+
+
+class DashboardResponseV2(BaseModel):
+    """Cash-PV BSM dashboard (ADR-0001 Section 11.1). Every new refresh
+    writes this; a v1 row is never upgraded in place."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal[2] = 2
+    snapshot_id: UUID
+    symbol: str
+    source_mode: str
+    collected_at: datetime
+    valuation_at: datetime
+    chain_asof: datetime | None
+    spot_asof: datetime | None
+    spot_asof_date: date | None
+    oi_asof: date | None
+    spot: float
+    spot_kind: Literal["last_trade"]
+    spot_origin: Literal["chain_payload"]
+    instrument: Instrument
+    parameters: ParametersV2
+    market_inputs: MarketInputs
+    pricing_contexts: tuple[ExpiryPricingContext, ...]
+    warnings: tuple[str, ...]
+    quality: QualityCounts
+    gex: GexData
+    surface: SurfaceData
+    calculation_input_hash: str
 
     @field_validator("collected_at", "valuation_at", "chain_asof", "spot_asof")
     @classmethod

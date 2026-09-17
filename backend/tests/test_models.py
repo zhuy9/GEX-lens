@@ -12,8 +12,10 @@ VALID = dict(
     symbols=("SPY", "QQQ", "AAPL"),
     default_symbol="SPY",
     refresh_min_interval_seconds=60,
-    risk_free_rate=0.04,
-    dividend_yields={"SPY": 0.0, "QQQ": 0.0, "AAPL": 0.0},
+    pricing_model="cash_pv_bsm_v2",
+    rate_source="fixture",
+    dividend_sources={"SPY": "fixture", "QQQ": "fixture", "AAPL": "fixture"},
+    reference_inputs_path="reference_inputs.json",
 )
 
 
@@ -29,12 +31,16 @@ def test_valid_settings_parses():
         {"symbols": ("SPY", "SPY")},
         {"symbols": ("SPY", "QQQ", "AAPL", "MSFT")},
         {"default_symbol": "MSFT"},
-        {"dividend_yields": {"SPY": 0.0, "QQQ": 0.0}},
-        {"dividend_yields": {"SPY": 0.0, "QQQ": 0.0, "AAPL": 0.0, "MSFT": 0.0}},
+        {"dividend_sources": {"SPY": "fixture", "QQQ": "fixture"}},
+        {
+            "dividend_sources": {
+                "SPY": "fixture",
+                "QQQ": "fixture",
+                "AAPL": "fixture",
+                "MSFT": "fixture",
+            }
+        },
         {"refresh_min_interval_seconds": 59},
-        {"risk_free_rate": 0.51},
-        {"risk_free_rate": -0.11},
-        {"dividend_yields": {"SPY": 0.51, "QQQ": 0.0, "AAPL": 0.0}},
     ],
 )
 def test_invalid_settings_rejected(override):

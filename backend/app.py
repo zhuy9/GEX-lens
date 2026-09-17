@@ -1,5 +1,6 @@
-"""Configuration, provider factory, four routes, orchestration."""
+"""Configuration, provider factories, routes, orchestration."""
 
+import hashlib
 import json
 import logging
 import math
@@ -7,7 +8,7 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -15,26 +16,43 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 import storage
-from analytics import analyze_snapshot
+from analytics import analyze_snapshot_v2, build_expiry_pricing_context
+from market_inputs import (
+    load_local_reference_inputs,
+    resolve_dividend_schedule,
+    resolve_market_inputs,
+    resolve_rate,
+)
 from models import (
-    ALGORITHM_VERSION,
     ChainRequest,
     ConfigResponse,
-    DashboardResponse,
+    DashboardResponseV2,
     ErrorBody,
     ErrorResponse,
-    Parameters,
+    Instrument,
+    OptionQuote,
+    ParametersV2,
+    ResolvedDividendSchedule,
+    ResolvedRate,
     Settings,
+    calendar_dte,
 )
-from provider import OptionsDataProvider, ProviderError
+from provider import DividendDataProvider, OptionsDataProvider, ProviderError, RateDataProvider
 
 MIN_CALENDAR_DTE = 1
 MAX_CALENDAR_DTE = 60
 MIN_STRIKE_PCT = 0.80
 MAX_STRIKE_PCT = 1.20
 PRICING_TIME_CONVENTION = "16:00 America/New_York on expiration date"
+MODEL_ID = "cash_pv_bsm_v2"
+ALGORITHM_VERSION = "2"
+
+# The initial three-symbol allowlist (PRD section 1); a new symbol needs its
+# own M0 instrument-identity verification before it belongs here.
+INSTRUMENT_CLASS = {"SPY": "etf", "QQQ": "etf", "AAPL": "equity"}
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +64,7 @@ _PROVIDER_ERROR_STATUS = {
 
 
 def build_provider(settings: Settings) -> OptionsDataProvider:
-    """The only place a concrete adapter is selected and imported (PRD 4.3)."""
+    """The only place a concrete chain adapter is selected and imported (PRD 4.3)."""
     if settings.source_mode == "fixture":
         from fixtures import FixtureProvider
 
@@ -56,6 +74,40 @@ def build_provider(settings: Settings) -> OptionsDataProvider:
 
         return NasdaqProvider()
     raise ValueError(f"Unknown source_mode: {settings.source_mode!r}")
+
+
+def build_rate_provider(rate_source: str) -> RateDataProvider | None:
+    """None means resolve_rate(rate_source="manual", ...) makes zero calls."""
+    if rate_source == "manual":
+        return None
+    if rate_source == "fixture":
+        from fixtures import FixtureRateProvider
+
+        return FixtureRateProvider()
+    if rate_source == "nyfed_sofr":
+        from rates import NyFedSofrProvider
+
+        return NyFedSofrProvider()
+    raise ValueError(f"Unknown rate_source: {rate_source!r}")
+
+
+def build_dividend_provider(dividend_source: str) -> DividendDataProvider | None:
+    """None means resolve_dividend_schedule(dividend_source="manual_schedule", ...)
+    makes zero calls. "nasdaq_dividends" is deliberately unimplemented: ADR-0001
+    Section 7.1 requires its field mapping to be verified against a real
+    authorized response (M0) before any raw field is guessed at."""
+    if dividend_source == "manual_schedule":
+        return None
+    if dividend_source == "fixture":
+        from fixtures import FixtureDividendProvider
+
+        return FixtureDividendProvider()
+    if dividend_source == "nasdaq_dividends":
+        raise ValueError(
+            "dividend_source 'nasdaq_dividends' is blocked pending ADR-0001 M0 verification "
+            "(see docs/dividend-source-contract.md)"
+        )
+    raise ValueError(f"Unknown dividend_source: {dividend_source!r}")
 
 
 class RefreshCoordinator:
@@ -118,7 +170,82 @@ def _http_error(
     return HTTPException(status_code=status_code, detail=detail)
 
 
-def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol: str) -> dict:
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _date_or_none(value: date | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _calculation_input_hash(
+    *,
+    contracts: tuple[OptionQuote, ...],
+    actual_spot: float,
+    valuation_at: datetime,
+    resolved_rate: ResolvedRate,
+    dividend_schedule: ResolvedDividendSchedule,
+) -> str:
+    """ADR-0001 Section 11.2: the numerical-reproduction hash. Excludes
+    UUIDs, report-generation time, and cache timestamps -- only inputs that
+    actually change the computed numbers."""
+    contract_rows = sorted(
+        (
+            {
+                "symbol": c.symbol,
+                "expiration": c.expiration.isoformat(),
+                "strike": str(c.strike),
+                "option_type": c.option_type,
+                "bid": c.bid,
+                "ask": c.ask,
+                "last": c.last,
+                "volume": c.volume,
+                "open_interest": c.open_interest,
+                "multiplier": c.multiplier,
+                "flags": sorted(c.flags),
+            }
+            for c in contracts
+        ),
+        key=lambda row: (row["symbol"], row["expiration"], row["strike"], row["option_type"]),
+    )
+    dividend_rows = sorted(
+        (
+            {
+                "event_id": e.event_id,
+                "ex_date": e.ex_date.isoformat(),
+                "payment_date": _date_or_none(e.payment_date),
+                "amount": str(e.amount),
+                "amount_status": e.amount_status,
+            }
+            for e in dividend_schedule.events
+        ),
+        key=lambda row: row["event_id"],
+    )
+    payload = {
+        "actual_spot": actual_spot,
+        "contracts": contract_rows,
+        "valuation_at": valuation_at.astimezone(UTC).isoformat(),
+        "min_calendar_dte": MIN_CALENDAR_DTE,
+        "max_calendar_dte": MAX_CALENDAR_DTE,
+        "min_strike_pct": MIN_STRIKE_PCT,
+        "max_strike_pct": MAX_STRIKE_PCT,
+        "rate_cc": resolved_rate.rate_cc,
+        "dividend_events": dividend_rows,
+        "model_id": MODEL_ID,
+        "algorithm_version": ALGORITHM_VERSION,
+    }
+    return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
+
+
+def _collect_and_save(
+    settings: Settings,
+    provider: OptionsDataProvider,
+    rate_provider: RateDataProvider | None,
+    dividend_providers: dict[str, DividendDataProvider | None],
+    symbol: str,
+    *,
+    force_reference_refresh: bool,
+) -> dict:
     request = ChainRequest(
         symbol=symbol, min_calendar_dte=MIN_CALENDAR_DTE, max_calendar_dte=MAX_CALENDAR_DTE
     )
@@ -132,15 +259,94 @@ def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol:
     # Provider-independent: any provider whose chain_asof is null falls back
     # to collection_started_at here, so the warning belongs at this one
     # orchestration boundary, not duplicated in every provider adapter.
-    warnings = snapshot.warnings if chain_asof is not None else (*snapshot.warnings, "VALUATION_TIME_ASSUMED")
-    q = settings.dividend_yields[symbol]
+    warnings: list[str] = list(
+        snapshot.warnings if chain_asof is not None else (*snapshot.warnings, "VALUATION_TIME_ASSUMED")
+    )
 
-    priced, gex, surface, quality = analyze_snapshot(
-        snapshot.contracts,
-        spot=snapshot.underlying_price,
-        r=settings.risk_free_rate,
-        q=q,
+    # Reference requests occur after chain collection, at this fixed
+    # valuation time (Section 4). Read the local file at most once, only
+    # when this attempt actually needs it (Section 5.2/8.2).
+    dividend_source = settings.dividend_sources[symbol]
+    local_inputs = (
+        load_local_reference_inputs(Path(settings.reference_inputs_path))
+        if settings.rate_source == "manual" or dividend_source != "fixture"
+        else None
+    )
+
+    resolved_rate = resolve_rate(
+        rate_source=settings.rate_source,
+        manual=local_inputs.manual_rate if local_inputs is not None else None,
+        provider=rate_provider,
         valuation_at=valuation_at,
+        attempt_started_at=valuation_at,
+        db_path=settings.db_path,
+        force_refresh=force_reference_refresh,
+    )
+
+    if dividend_source == "fixture":
+        from fixtures import fixture_schedule_review
+
+        review = fixture_schedule_review(symbol, valuation_at)
+    else:
+        if local_inputs is None or symbol not in local_inputs.schedules:
+            raise ProviderError(
+                "DIVIDEND_REVIEW_REQUIRED",
+                f"No reviewed schedule for {symbol!r} in {settings.reference_inputs_path}",
+            )
+        review = local_inputs.schedules[symbol]
+
+    latest_in_scope_expiration = max(
+        (
+            c.expiration
+            for c in snapshot.contracts
+            if MIN_CALENDAR_DTE <= calendar_dte(c.expiration, valuation_at) <= MAX_CALENDAR_DTE
+        ),
+        default=None,
+    )
+    dividend_schedule, dividend_warnings = resolve_dividend_schedule(
+        dividend_source=dividend_source,
+        review=review,
+        provider=dividend_providers.get(symbol),
+        valuation_at=valuation_at,
+        attempt_started_at=valuation_at,
+        latest_in_scope_expiration=latest_in_scope_expiration,
+        db_path=settings.db_path,
+        force_refresh=force_reference_refresh,
+    )
+    market_inputs_obj = resolve_market_inputs(
+        rate=resolved_rate,
+        dividend_schedule=dividend_schedule,
+        dividend_warnings=dividend_warnings,
+        resolved_at=snapshot.collection_started_at,
+    )
+    for code in market_inputs_obj.warnings:
+        if code not in warnings:
+            warnings.append(code)
+
+    # One context per expiry actually present in this chain (M3.2), not one
+    # independent dividend calculation per function.
+    contexts = {
+        expiration: build_expiry_pricing_context(
+            expiration,
+            valuation_at,
+            snapshot.underlying_price,
+            resolved_rate.rate_cc,
+            dividend_schedule.events,
+            chain_asof=snapshot.chain_asof,
+            spot_asof=snapshot.spot_asof,
+            spot_asof_date=snapshot.spot_asof_date,
+        )
+        for expiration in {c.expiration for c in snapshot.contracts}
+    }
+    for context in contexts.values():
+        for code in context.warnings:
+            if code not in warnings:
+                warnings.append(code)
+
+    priced, gex, surface, quality = analyze_snapshot_v2(
+        snapshot.contracts,
+        actual_spot=snapshot.underlying_price,
+        contexts=contexts,
         min_calendar_dte=MIN_CALENDAR_DTE,
         max_calendar_dte=MAX_CALENDAR_DTE,
         min_strike_pct=MIN_STRIKE_PCT,
@@ -149,7 +355,7 @@ def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol:
     )
 
     snapshot_id = uuid4()
-    dashboard = DashboardResponse(
+    dashboard = DashboardResponseV2(
         snapshot_id=snapshot_id,
         symbol=symbol,
         source_mode=settings.source_mode,
@@ -157,25 +363,35 @@ def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol:
         valuation_at=valuation_at,
         chain_asof=snapshot.chain_asof,
         spot_asof=snapshot.spot_asof,
+        spot_asof_date=snapshot.spot_asof_date,
         oi_asof=snapshot.oi_asof,
         spot=snapshot.underlying_price,
         spot_kind=snapshot.underlying_price_kind,
         spot_origin=snapshot.underlying_price_origin,
-        parameters=Parameters(
-            r=settings.risk_free_rate,
-            q=q,
+        instrument=Instrument(symbol=symbol, instrument_class=INSTRUMENT_CLASS[symbol]),
+        parameters=ParametersV2(
+            r=resolved_rate.rate_cc,
+            q=0.0,
             multiplier_assumed="MULTIPLIER_ASSUMED" in snapshot.warnings,
             min_calendar_dte=MIN_CALENDAR_DTE,
             max_calendar_dte=MAX_CALENDAR_DTE,
             min_strike_pct=MIN_STRIKE_PCT,
             max_strike_pct=MAX_STRIKE_PCT,
             pricing_time_convention=PRICING_TIME_CONVENTION,
-            algorithm_version=ALGORITHM_VERSION,
         ),
-        warnings=warnings,
+        market_inputs=market_inputs_obj,
+        pricing_contexts=tuple(contexts.values()),
+        warnings=tuple(warnings),
         quality=quality,
         gex=gex,
         surface=surface,
+        calculation_input_hash=_calculation_input_hash(
+            contracts=snapshot.contracts,
+            actual_spot=snapshot.underlying_price,
+            valuation_at=valuation_at,
+            resolved_rate=resolved_rate,
+            dividend_schedule=dividend_schedule,
+        ),
     )
     dashboard_json = dashboard.model_dump(mode="json")
 
@@ -197,6 +413,10 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
     storage.init_schema(settings.db_path)
     provider_is_owned = provider is None
     active_provider = provider if provider is not None else build_provider(settings)
+    rate_provider = build_rate_provider(settings.rate_source)
+    dividend_providers = {
+        symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in settings.symbols
+    }
     gate = RefreshCoordinator(settings.refresh_min_interval_seconds)
 
     @asynccontextmanager
@@ -207,6 +427,10 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
         # caller) belongs to whoever constructed it, not to this app.
         if provider_is_owned:
             close = getattr(active_provider, "close", None)
+            if close is not None:
+                close()
+        for reference_provider in (rate_provider, *dividend_providers.values()):
+            close = getattr(reference_provider, "close", None)
             if close is not None:
                 close()
 
@@ -257,8 +481,9 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
             symbols=settings.symbols,
             default_symbol=settings.default_symbol,
             source_mode=settings.source_mode,
-            risk_free_rate=settings.risk_free_rate,
-            dividend_yields=settings.dividend_yields,
+            pricing_model=settings.pricing_model,
+            rate_source=settings.rate_source,
+            dividend_sources=settings.dividend_sources,
             min_calendar_dte=MIN_CALENDAR_DTE,
             max_calendar_dte=MAX_CALENDAR_DTE,
             min_strike_pct=MIN_STRIKE_PCT,
@@ -279,7 +504,7 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
         return dashboard
 
     @app.post("/api/dashboard/{symbol}/refresh")
-    def refresh(symbol: str) -> dict:
+    def refresh(symbol: str, force_reference_refresh: bool = False) -> dict:
         symbol = _require_symbol(symbol)
         acquired, retry_after = gate.begin()
         if not acquired:
@@ -292,7 +517,14 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
         # exception handler above, which logs it and returns the same
         # sanitized 500 envelope this used to build by hand.
         try:
-            return _collect_and_save(settings, active_provider, symbol)
+            return _collect_and_save(
+                settings,
+                active_provider,
+                rate_provider,
+                dividend_providers,
+                symbol,
+                force_reference_refresh=force_reference_refresh,
+            )
         except ProviderError as exc:
             if exc.code == "UPSTREAM_RATE_LIMITED":
                 retry_after = exc.retry_after_seconds
@@ -311,9 +543,19 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
     return app
 
 
-def _load_settings() -> Settings:
-    path = Path(__file__).parent / "settings.json"
-    return Settings.model_validate(json.loads(path.read_text()))
+def _load_settings(path: Path | None = None) -> Settings:
+    path = path if path is not None else Path(__file__).parent / "settings.json"
+    raw = json.loads(path.read_text())
+    try:
+        return Settings.model_validate(raw)
+    except ValidationError as exc:
+        if "risk_free_rate" in raw or "dividend_yields" in raw:
+            raise ValueError(
+                f"{path} uses the pre-ADR-0001 config schema (risk_free_rate/dividend_yields). "
+                "Migrate to pricing_model/rate_source/dividend_sources/reference_inputs_path -- "
+                "see settings.example.json."
+            ) from exc
+        raise
 
 
 def main() -> None:

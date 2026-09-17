@@ -11,8 +11,10 @@ def make_settings(db_path: str, source_mode: str = "fixture") -> Settings:
         symbols=("SPY", "QQQ", "AAPL"),
         default_symbol="SPY",
         refresh_min_interval_seconds=60,
-        risk_free_rate=0.04,
-        dividend_yields={"SPY": 0.0, "QQQ": 0.0, "AAPL": 0.0},
+        pricing_model="cash_pv_bsm_v2",
+        rate_source="fixture",
+        dividend_sources={"SPY": "fixture", "QQQ": "fixture", "AAPL": "fixture"},
+        reference_inputs_path="reference_inputs.json",
     )
 
 
@@ -33,7 +35,11 @@ def make_snapshot(provider_id: str, symbol: str = "SPY") -> ChainSnapshot:
         flags=(),
     )
     put = call.model_copy(update={"option_type": "P"})
-    now = datetime(2026, 1, 1, tzinfo=UTC)
+    # Matches fixtures.FIXED_VALUATION_AT: make_settings() defaults to
+    # rate_source/dividend_sources="fixture", whose synthetic rate/review
+    # are anchored to that same instant (Section 8.2) -- a different clock
+    # here would make them look stale or not-yet-effective.
+    now = datetime(2026, 1, 2, 21, 0, tzinfo=UTC)
     return ChainSnapshot(
         provider_id=provider_id,
         symbol=symbol,
