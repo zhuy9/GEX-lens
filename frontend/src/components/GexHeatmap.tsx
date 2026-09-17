@@ -1,10 +1,11 @@
 import { memo, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { GexCell, GexData, GexMode } from "@/types";
+import type { GexCell, GexData, GexMode, MoveUnit } from "@/types";
 
 interface GexHeatmapProps {
 	gex: GexData;
 	mode: GexMode;
+	unit: MoveUnit;
 	spot: number;
 	valuationAt: string;
 }
@@ -67,15 +68,33 @@ function fmtExpirationHeader(expirationIso: string): string {
 	});
 }
 
-function cellRaw(cell: GexCell | null, mode: GexMode): number | null {
+// Section 10's only frontend financial conversion: canonical storage stays
+// per-1%-move, this scales displayed magnitudes only. Never scales gamma/OI.
+function displayFactor(unit: MoveUnit, spot: number): number {
+	return unit === "per_1pct" ? 1 : 1 / (0.01 * spot);
+}
+
+function scale(value: number | null, factor: number): number | null {
+	return value === null ? null : value * factor;
+}
+
+function cellRaw(
+	cell: GexCell | null,
+	mode: GexMode,
+	factor: number,
+): number | null {
 	if (cell === null) return null;
-	return mode === "signed" ? cell.signed_proxy : cell.gross_exposure;
+	return scale(
+		mode === "signed" ? cell.signed_proxy : cell.gross_exposure,
+		factor,
+	);
 }
 
 function cellTitle(
 	cell: GexCell | null,
 	strike: string,
 	expiration: string,
+	factor: number,
 ): string {
 	if (cell === null) {
 		return `Strike ${strike}\nExpiration ${expiration}\nNo contracts in scope`;
@@ -87,10 +106,10 @@ function cellTitle(
 		`Put OI: ${fmtCount(cell.put_oi)}`,
 		`Call gamma: ${cell.call_gamma ?? "Unknown"}`,
 		`Put gamma: ${cell.put_gamma ?? "Unknown"}`,
-		`Call exposure: ${fmtMillions(cell.call_exposure)}`,
-		`Put exposure: ${fmtMillions(cell.put_exposure)}`,
-		`Signed proxy: ${fmtMillions(cell.signed_proxy)}`,
-		`Gross exposure: ${fmtMillions(cell.gross_exposure)}`,
+		`Call exposure: ${fmtMillions(scale(cell.call_exposure, factor))}`,
+		`Put exposure: ${fmtMillions(scale(cell.put_exposure, factor))}`,
+		`Signed proxy: ${fmtMillions(scale(cell.signed_proxy, factor))}`,
+		`Gross exposure: ${fmtMillions(scale(cell.gross_exposure, factor))}`,
 		`Status: ${cell.status}`,
 	].join("\n");
 }
@@ -128,22 +147,24 @@ function cellTextColor(
 export const GexHeatmap = memo(function GexHeatmap({
 	gex,
 	mode,
+	unit,
 	spot,
 	valuationAt,
 }: GexHeatmapProps) {
 	const [expanded, setExpanded] = useState(false);
+	const factor = displayFactor(unit, spot);
 
 	const { bound, hasUsableData } = useMemo(() => {
 		const values = gex.cells
 			.flat()
-			.map((cell) => cellRaw(cell, mode))
+			.map((cell) => cellRaw(cell, mode, factor))
 			.filter((v): v is number => v !== null)
 			.map(Math.abs);
 		return {
 			bound: values.length > 0 ? Math.max(...values) : 1,
 			hasUsableData: values.length > 0,
 		};
-	}, [gex, mode]);
+	}, [gex, mode, factor]);
 
 	if (gex.strikes.length === 0 || gex.expirations.length === 0) {
 		return (
@@ -220,7 +241,8 @@ export const GexHeatmap = memo(function GexHeatmap({
 			</div>
 
 			<div className="text-xs text-muted-foreground">
-				USD delta-notional change per 1% underlying move ·{" "}
+				USD delta-notional change per{" "}
+				{unit === "per_1pct" ? "1% underlying move" : "$1 underlying move"} ·{" "}
 				{mode === "signed"
 					? "Call-minus-put GEX proxy"
 					: "Gross OI-weighted gamma"}
@@ -277,11 +299,11 @@ export const GexHeatmap = memo(function GexHeatmap({
 									</td>
 									{gex.expirations.map((expiration, expIndex) => {
 										const cell = gex.cells[expIndex][strikeIndex];
-										const value = cellRaw(cell, mode);
+										const value = cellRaw(cell, mode, factor);
 										return (
 											<td
 												key={expiration}
-												title={cellTitle(cell, strike, expiration)}
+												title={cellTitle(cell, strike, expiration, factor)}
 												className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
 												style={{
 													backgroundColor: cellBackground(value, bound, mode),

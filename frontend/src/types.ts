@@ -117,3 +117,5 @@ export interface ApiErrorResponse {
 }
 
 export type GexMode = "signed" | "gross";
+
+export type MoveUnit = "per_1pct" | "per_1dollar";

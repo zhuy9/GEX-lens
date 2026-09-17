@@ -36,6 +36,7 @@ describe("R10: displayed DTE uses the NY calendar date, not UTC", () => {
 			<GexHeatmap
 				gex={makeGex()}
 				mode="signed"
+				unit="per_1pct"
 				spot={100}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -53,6 +54,7 @@ describe("R10: no usable GEX data is distinguished from no axes", () => {
 			<GexHeatmap
 				gex={incompleteGex}
 				mode="signed"
+				unit="per_1pct"
 				spot={100}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -70,6 +72,7 @@ describe("R10: no usable GEX data is distinguished from no axes", () => {
 			<GexHeatmap
 				gex={makeGex()}
 				mode="signed"
+				unit="per_1pct"
 				spot={100}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -90,6 +93,7 @@ describe("R14: spot divider row", () => {
 			<GexHeatmap
 				gex={gex}
 				mode="signed"
+				unit="per_1pct"
 				spot={101}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -122,6 +126,7 @@ describe("R14: expand/collapse the strike window", () => {
 			<GexHeatmap
 				gex={makeManyStrikesGex()}
 				mode="signed"
+				unit="per_1pct"
 				spot={100}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -152,6 +157,7 @@ describe("R14: both GEX color modes", () => {
 			<GexHeatmap
 				gex={makeGex()}
 				mode="signed"
+				unit="per_1pct"
 				spot={100}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -165,6 +171,7 @@ describe("R14: both GEX color modes", () => {
 			<GexHeatmap
 				gex={makeGex()}
 				mode="gross"
+				unit="per_1pct"
 				spot={100}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -181,6 +188,7 @@ describe("R10: units are visible on the panel", () => {
 			<GexHeatmap
 				gex={makeGex()}
 				mode="signed"
+				unit="per_1pct"
 				spot={100}
 				valuationAt="2026-09-17T02:00:00Z"
 			/>,
@@ -189,5 +197,75 @@ describe("R10: units are visible on the panel", () => {
 			screen.getByText(/USD delta-notional change per 1% underlying move/i),
 		).toBeInTheDocument();
 		expect(screen.getByText(/Call-heavy \(\$80K\)/)).toBeInTheDocument();
+	});
+});
+
+// ADR-0001 M1/N5: S=200, gamma=0.02, multiplier=100, call OI=1000, put OI=600.
+// Canonical storage stays per-1%-move (call 800,000 / put 480,000 / signed
+// 320,000 / gross 1,280,000); per-$1 must show exactly half of that here
+// because factor = 1 / (0.01 * 200) = 0.5.
+const N5_CELL: GexCell = {
+	call_oi: 1000,
+	put_oi: 600,
+	call_gamma: 0.02,
+	put_gamma: 0.02,
+	call_exposure: 800_000,
+	put_exposure: 480_000,
+	signed_proxy: 320_000,
+	gross_exposure: 1_280_000,
+	status: "COMPLETE",
+};
+
+describe("ADR-0001 M1: move-unit display conversion", () => {
+	it("per 1% (default) shows the canonical stored magnitudes unchanged", () => {
+		render(
+			<GexHeatmap
+				gex={makeGex({ cells: [[N5_CELL]] })}
+				mode="signed"
+				unit="per_1pct"
+				spot={200}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+		expect(screen.getByText("$320K")).toBeInTheDocument(); // signed proxy cell
+		expect(screen.getByText(/Call-heavy \(\$320K\)/)).toBeInTheDocument();
+		expect(screen.getByText(/per 1% underlying move/i)).toBeInTheDocument();
+	});
+
+	it("per $1 scales the displayed cell and legend bound by 1 / (0.01 * spot), using actual spot", () => {
+		render(
+			<GexHeatmap
+				gex={makeGex({ cells: [[N5_CELL]] })}
+				mode="signed"
+				unit="per_1dollar"
+				spot={200}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+		expect(screen.getByText("$160K")).toBeInTheDocument(); // 320,000 * 0.5
+		expect(screen.getByText(/Call-heavy \(\$160K\)/)).toBeInTheDocument();
+		expect(screen.getByText(/per \$1 underlying move/i)).toBeInTheDocument();
+	});
+
+	it("switching units does not change gamma or OI, and gross mode scales the same way", () => {
+		render(
+			<GexHeatmap
+				gex={makeGex({ cells: [[N5_CELL]] })}
+				mode="gross"
+				unit="per_1dollar"
+				spot={200}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+		expect(screen.getByText("$640K")).toBeInTheDocument(); // 1,280,000 * 0.5
+		const cell = screen.getByText("$640K");
+		expect(cell).toHaveAttribute(
+			"title",
+			expect.stringContaining("Call gamma: 0.02"),
+		);
+		expect(cell).toHaveAttribute(
+			"title",
+			expect.stringContaining("Call OI: 1,000"),
+		);
 	});
 });

@@ -18,7 +18,7 @@ import { useConfig } from "@/hooks/useConfig";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useTick } from "@/hooks/useTick";
 import { secondsUntil } from "@/lib/time";
-import type { GexMode } from "@/types";
+import type { GexMode, MoveUnit } from "@/types";
 
 // Only this panel needs Plotly; the GEX heatmap is a plain HTML table. The
 // production build is a single ~5MB (~1.5MB gzipped) bundle dominated by
@@ -37,6 +37,7 @@ export default function App() {
 	} = useConfig();
 	const [symbol, setSymbol] = useState<string | null>(null);
 	const [gexMode, setGexMode] = useState<GexMode>("signed");
+	const [moveUnit, setMoveUnit] = useState<MoveUnit>("per_1pct");
 	const tick = useTick();
 
 	// Returned (not fire-and-forgotten) so useDashboard can stay "refreshing"
@@ -212,6 +213,24 @@ export default function App() {
 								<SelectItem value="gross">Gross OI-weighted gamma</SelectItem>
 							</SelectContent>
 						</Select>
+						<span
+							className="text-sm text-muted-foreground"
+							id="move-unit-label"
+						>
+							Move unit
+						</span>
+						<Select
+							value={moveUnit}
+							onValueChange={(v) => setMoveUnit(v as MoveUnit)}
+						>
+							<SelectTrigger aria-labelledby="move-unit-label" className="w-40">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="per_1pct">Per 1% move</SelectItem>
+								<SelectItem value="per_1dollar">Per $1 move</SelectItem>
+							</SelectContent>
+						</Select>
 						{dashboard.surface.status === "INSUFFICIENT_DATA" && (
 							<Badge variant="outline">Surface: insufficient data</Badge>
 						)}
@@ -219,13 +238,19 @@ export default function App() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle>GEX Heatmap</CardTitle>
+							<CardTitle>
+								{dashboard.symbol} GEX Heatmap{" "}
+								<span className="font-normal text-muted-foreground">
+									· 0DTE excluded
+								</span>
+							</CardTitle>
 						</CardHeader>
 						<CardContent>
 							<ChartErrorBoundary resetKey={dashboard.snapshot_id}>
 								<GexHeatmap
 									gex={dashboard.gex}
 									mode={gexMode}
+									unit={moveUnit}
 									spot={dashboard.spot}
 									valuationAt={dashboard.valuation_at}
 								/>
@@ -235,7 +260,12 @@ export default function App() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle>Implied Volatility Surface</CardTitle>
+							<CardTitle>
+								{dashboard.symbol} Implied Volatility Surface{" "}
+								<span className="font-normal text-muted-foreground">
+									· 0DTE excluded
+								</span>
+							</CardTitle>
 						</CardHeader>
 						<CardContent className="h-96">
 							<ChartErrorBoundary

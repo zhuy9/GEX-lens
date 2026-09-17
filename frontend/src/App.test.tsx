@@ -279,7 +279,7 @@ describe("GEX mode", () => {
 		const user = userEvent.setup();
 		render(<App />);
 
-		await screen.findByText("GEX Heatmap");
+		await screen.findByText(/GEX Heatmap/i);
 		const callsBefore = fetchMock.mock.calls.length;
 
 		await user.click(screen.getByRole("combobox", { name: /gex mode/i }));
