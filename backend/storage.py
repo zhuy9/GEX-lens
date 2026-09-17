@@ -12,6 +12,7 @@ from models import PricedQuote
 
 _LOCK = threading.Lock()
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
+_KEEP_LATEST = 20  # PRD section 3: latest 20 snapshots per (source_mode, symbol)
 
 
 def init_schema(db_path: str) -> None:
@@ -53,10 +54,9 @@ def save_snapshot(
     raw_payload_json: str,
     dashboard_json: dict,
     priced_quotes: tuple[PricedQuote, ...],
-    keep: int = 20,
 ) -> None:
-    """Insert one snapshot and its contracts, then prune to the newest `keep`
-    for this (source_mode, symbol) pair, all in one transaction."""
+    """Insert one snapshot and its contracts, then prune to the newest
+    _KEEP_LATEST for this (source_mode, symbol) pair, all in one transaction."""
     with _LOCK:
         conn = duckdb.connect(db_path)
         try:
@@ -119,7 +119,7 @@ def save_snapshot(
                 ORDER BY collected_at DESC, snapshot_id DESC
                 OFFSET ?
                 """,
-                [source_mode, symbol, keep],
+                [source_mode, symbol, _KEEP_LATEST],
             ).fetchall()
             for (stale_id,) in stale:
                 conn.execute("DELETE FROM option_quotes WHERE snapshot_id = ?", [stale_id])

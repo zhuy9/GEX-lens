@@ -4,8 +4,8 @@ from decimal import Decimal
 from models import ChainRequest, ChainSnapshot, OptionQuote, Settings
 
 
-def make_settings(db_path: str, **overrides) -> Settings:
-    base = dict(
+def make_settings(db_path: str) -> Settings:
+    return Settings(
         source_mode="fixture",
         db_path=db_path,
         symbols=("SPY", "QQQ", "AAPL"),
@@ -14,8 +14,6 @@ def make_settings(db_path: str, **overrides) -> Settings:
         risk_free_rate=0.04,
         dividend_yields={"SPY": 0.0, "QQQ": 0.0, "AAPL": 0.0},
     )
-    base.update(overrides)
-    return Settings(**base)
 
 
 def make_snapshot(provider_id: str, symbol: str = "SPY") -> ChainSnapshot:
