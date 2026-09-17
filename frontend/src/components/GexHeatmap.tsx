@@ -9,6 +9,9 @@ interface GexHeatmapProps {
 
 const MILLIONS = 1_000_000;
 const THOUSAND = 1_000;
+const ROW_HEIGHT_PX = 20; // minimum per-strike height for readable y-axis labels
+const CHART_CHROME_PX = 100; // x-axis labels + margins
+const MIN_HEIGHT_PX = 384;
 
 function fmtMillions(value: number | null): string {
 	if (value === null) return "Unknown";
@@ -98,38 +101,45 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 		);
 	}
 
+	const plotHeight = Math.max(
+		MIN_HEIGHT_PX,
+		gex.strikes.length * ROW_HEIGHT_PX + CHART_CHROME_PX,
+	);
+
 	return (
-		<Plot
-			data={[
-				{
-					type: "heatmap",
-					x: gex.expirations,
-					y: gex.strikes,
-					z,
-					text,
-					texttemplate: "%{text}",
-					textfont: { color: "#fff", size: 10 },
-					hovertext: hoverText,
-					hovertemplate: "%{hovertext}<extra></extra>",
-					colorscale: mode === "signed" ? "RdBu" : "YlOrRd",
-					reversescale: mode === "signed",
-					zmid: mode === "signed" ? 0 : undefined,
-					zmin,
-					zmax,
-					colorbar: { title: { text: "USD millions" } },
-					xgap: 1,
-					ygap: 1,
-				},
-			]}
-			layout={{
-				autosize: true,
-				margin: { l: 90, r: 20, t: 20, b: 60 },
-				xaxis: { title: { text: "Expiration" }, type: "category" },
-				yaxis: { title: { text: "Strike" }, type: "category" },
-			}}
-			style={{ width: "100%", height: "100%" }}
-			useResizeHandler
-			config={{ displaylogo: false, responsive: true }}
-		/>
+		<div style={{ height: plotHeight }}>
+			<Plot
+				data={[
+					{
+						type: "heatmap",
+						x: gex.expirations,
+						y: gex.strikes,
+						z,
+						text,
+						texttemplate: "%{text}",
+						textfont: { color: "#fff", size: 10 },
+						hovertext: hoverText,
+						hovertemplate: "%{hovertext}<extra></extra>",
+						colorscale: mode === "signed" ? "RdBu" : "YlOrRd",
+						reversescale: mode === "signed",
+						zmid: mode === "signed" ? 0 : undefined,
+						zmin,
+						zmax,
+						colorbar: { title: { text: "USD millions" } },
+						xgap: 1,
+						ygap: 1,
+					},
+				]}
+				layout={{
+					autosize: true,
+					margin: { l: 90, r: 20, t: 20, b: 60 },
+					xaxis: { title: { text: "Expiration" }, type: "category" },
+					yaxis: { title: { text: "Strike" }, type: "category" },
+				}}
+				style={{ width: "100%", height: "100%" }}
+				useResizeHandler
+				config={{ displaylogo: false, responsive: true }}
+			/>
+		</div>
 	);
 }
