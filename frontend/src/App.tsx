@@ -18,11 +18,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useConfig } from "@/hooks/useConfig";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useTick } from "@/hooks/useTick";
-import { clockOffsetMs, secondsUntil } from "@/lib/time";
+import { secondsUntil } from "@/lib/time";
 import type { GexMode } from "@/types";
 
 export default function App() {
-	const { config, reload: reloadConfig } = useConfig();
+	const { config, serverOffsetMs, reload: reloadConfig } = useConfig();
 	const [symbol, setSymbol] = useState<string | null>(null);
 	const [gexMode, setGexMode] = useState<GexMode>("signed");
 	const tick = useTick();
@@ -54,9 +54,8 @@ export default function App() {
 		void reloadConfig();
 	}
 
-	const offsetMs = config ? clockOffsetMs(config.server_time) : 0;
 	const cooldownRemaining = config
-		? secondsUntil(config.refresh_not_before, offsetMs)
+		? secondsUntil(config.refresh_not_before, serverOffsetMs)
 		: 0;
 	void tick; // force recomputation of the above each second without a network call
 
@@ -136,7 +135,7 @@ export default function App() {
 						<CardContent>
 							<SnapshotMeta
 								dashboard={dashboard}
-								offsetMs={offsetMs}
+								offsetMs={serverOffsetMs}
 								tick={tick}
 							/>
 						</CardContent>

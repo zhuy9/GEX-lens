@@ -221,4 +221,69 @@ describe("no automatic refresh", () => {
 		expect(fetchMock.mock.calls.length).toBe(callsBefore);
 		vi.useRealTimers();
 	});
+
+	it("R01: countdown and snapshot age actually advance with the clock, and the button re-enables at the deadline", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+
+		const config = makeConfig({
+			server_time: "2026-01-01T00:00:00.000Z",
+			refresh_not_before: "2026-01-01T00:00:30.000Z",
+		});
+		const dashboard = makeDashboard({
+			collected_at: "2026-01-01T00:00:00.000Z",
+		});
+		const fetchMock = installFetchMock({
+			config,
+			dashboards: { SPY: dashboard },
+		});
+
+		render(<App />);
+		// vi.waitFor's own polling can silently advance the fake clock by a
+		// sub-second, unpredictable amount before this first check passes, so
+		// read the actual starting values instead of assuming "30s"/"0s ago".
+		await vi.waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: /refresh available in \d+s/i }),
+			).toBeInTheDocument(),
+		);
+		const initialRemaining = Number(
+			screen
+				.getByRole("button", { name: /refresh available in \d+s/i })
+				.textContent?.match(/(\d+)s/)?.[1],
+		);
+		const initialAge = Number(
+			screen
+				.getByText(/^Collected \d+s ago$/)
+				.textContent?.match(/(\d+)s/)?.[1],
+		);
+
+		const callsBefore = fetchMock.mock.calls.length;
+
+		await vi.advanceTimersByTimeAsync(20_000);
+		const remainingAfter = Number(
+			screen
+				.getByRole("button", { name: /refresh available in \d+s/i })
+				.textContent?.match(/(\d+)s/)?.[1],
+		);
+		const ageAfter = Number(
+			screen
+				.getByText(/^Collected \d+s ago$/)
+				.textContent?.match(/(\d+)s/)?.[1],
+		);
+		// Exact digits are sensitive to fake-timer/React tick-scheduling lag
+		// (a display-only concern); a 1-tick tolerance still cleanly tells a
+		// genuinely advancing clock apart from R01's frozen one.
+		expect(
+			Math.abs(initialRemaining - 20 - remainingAfter),
+		).toBeLessThanOrEqual(1);
+		expect(Math.abs(initialAge + 20 - ageAfter)).toBeLessThanOrEqual(1);
+
+		// Comfortably past the deadline regardless of the exact starting value.
+		await vi.advanceTimersByTimeAsync((initialRemaining + 5) * 1000);
+		expect(screen.getByRole("button", { name: /^refresh$/i })).toBeEnabled();
+
+		expect(fetchMock.mock.calls.length).toBe(callsBefore);
+		vi.useRealTimers();
+	});
 });
