@@ -234,7 +234,7 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
 
     @app.get("/api/health")
     def health() -> dict:
-        storage.get_latest_dashboard(settings.db_path, settings.source_mode, settings.default_symbol)
+        storage.health_check(settings.db_path)
         return {"status": "ok", "schema_version": 1}
 
     @app.get("/api/config")

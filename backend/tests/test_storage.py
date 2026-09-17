@@ -52,6 +52,86 @@ def save_one(db_path: str, *, source_mode="fixture", symbol="SPY", strike="100")
     return snapshot_id
 
 
+def test_health_check_succeeds_without_any_saved_data(tmp_path):
+    # R13: health has no reason to decode a dashboard snapshot -- confirm it
+    # works even when none exists yet.
+    db_path = str(tmp_path / "test.duckdb")
+    storage.init_schema(db_path)
+    storage.health_check(db_path)  # must not raise
+
+
+def test_option_quote_fields_round_trip_into_their_own_columns(tmp_path):
+    # R13: CSV row order, the read_csv() type map, and both the INSERT
+    # target and SELECT column lists must all agree, or a value lands in
+    # the wrong column silently (types like DOUBLE/DOUBLE wouldn't even
+    # raise). Distinct, non-confusable values per field catch a swap.
+    db_path = str(tmp_path / "test.duckdb")
+    storage.init_schema(db_path)
+    quote = OptionQuote(
+        symbol="SPY",
+        expiration=date(2026, 1, 31),
+        strike=Decimal("101.50"),
+        option_type="P",
+        bid=11.11,
+        ask=22.22,
+        last=33.33,
+        volume=444,
+        open_interest=5555,
+        multiplier=100,
+        provider_contract_id="CID-1",
+        quote_asof=datetime(2026, 1, 1, 12, 0, tzinfo=UTC),
+        flags=("MULTIPLIER_ASSUMED",),
+    )
+    pq = PricedQuote(quote=quote, mid=16.665, iv=0.42, gamma=0.0123, exclusion_reason=None)
+    snapshot_id = uuid4()
+    now = datetime.now(UTC)
+    storage.save_snapshot(
+        db_path,
+        source_mode="fixture",
+        symbol="SPY",
+        snapshot_id=snapshot_id,
+        collected_at=now,
+        valuation_at=now,
+        raw_payload_json="{}",
+        dashboard_json={"snapshot_id": str(snapshot_id)},
+        priced_quotes=(pq,),
+    )
+
+    conn = duckdb.connect(db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT symbol, expiration, strike, option_type, bid, ask, last,
+                   volume, open_interest, multiplier, provider_contract_id,
+                   mid, iv, gamma, exclusion_reason, flags
+            FROM option_quotes WHERE snapshot_id = ?
+            """,
+            [snapshot_id],
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row == (
+        "SPY",
+        date(2026, 1, 31),
+        Decimal("101.500000"),
+        "P",
+        11.11,
+        22.22,
+        33.33,
+        444,
+        5555,
+        100,
+        "CID-1",
+        16.665,
+        0.42,
+        0.0123,
+        None,
+        '["MULTIPLIER_ASSUMED"]',
+    )
+
+
 def test_schema_creates_and_latest_survives_reconnect(tmp_path):
     # M1.1, M1.4
     db_path = str(tmp_path / "test.duckdb")

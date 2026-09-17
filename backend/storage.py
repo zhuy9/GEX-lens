@@ -1,5 +1,6 @@
 """DuckDB initialization, latest/save/prune; no provider parsing."""
 
+import contextlib
 import csv
 import json
 import os
@@ -51,55 +52,67 @@ def _csv_cell(value: object) -> object:
     return value
 
 
+def _row_dict(snapshot_id: uuid.UUID, pq: PricedQuote) -> dict[str, object]:
+    q = pq.quote
+    return {
+        "snapshot_id": snapshot_id,
+        "symbol": q.symbol,
+        "expiration": q.expiration,
+        "strike": q.strike,
+        "option_type": q.option_type,
+        "bid": q.bid,
+        "ask": q.ask,
+        "last": q.last,
+        "volume": q.volume,
+        "open_interest": q.open_interest,
+        "multiplier": q.multiplier,
+        "provider_contract_id": q.provider_contract_id,
+        "quote_asof": q.quote_asof,
+        "mid": pq.mid,
+        "iv": pq.iv,
+        "gamma": pq.gamma,
+        "exclusion_reason": pq.exclusion_reason,
+        "flags": q.flags,
+    }
+
+
 def _bulk_insert_option_quotes(
     conn: duckdb.DuckDBPyConnection, snapshot_id: uuid.UUID, priced_quotes: tuple[PricedQuote, ...]
 ) -> None:
+    # Column order lives in exactly one place -- _OPTION_QUOTES_COLUMNS'
+    # key order -- and drives the CSV row order, the read_csv() type map,
+    # and both the INSERT target and SELECT column lists below. Previously
+    # these were four independently hand-typed lists that all had to agree
+    # by inspection; a silent reorder in any one of them would have
+    # misrouted values into the wrong column without any error.
+    column_names = list(_OPTION_QUOTES_COLUMNS)
     fd, csv_path = tempfile.mkstemp(suffix=".csv")
     try:
-        with os.fdopen(fd, "w", newline="") as f:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             for pq in priced_quotes:
-                q = pq.quote
-                writer.writerow(
-                    _csv_cell(v)
-                    for v in (
-                        snapshot_id,
-                        q.symbol,
-                        q.expiration,
-                        q.strike,
-                        q.option_type,
-                        q.bid,
-                        q.ask,
-                        q.last,
-                        q.volume,
-                        q.open_interest,
-                        q.multiplier,
-                        q.provider_contract_id,
-                        q.quote_asof,
-                        pq.mid,
-                        pq.iv,
-                        pq.gamma,
-                        pq.exclusion_reason,
-                        q.flags,
-                    )
-                )
+                row = _row_dict(snapshot_id, pq)
+                writer.writerow(_csv_cell(row[name]) for name in column_names)
         columns_sql = ", ".join(
             f"'{name}': '{sql_type}'" for name, sql_type in _OPTION_QUOTES_COLUMNS.items()
         )
+        target_cols = ", ".join(column_names)
+        select_cols = ", ".join(
+            f"{name}::TIMESTAMPTZ" if name == "quote_asof" else name for name in column_names
+        )
         conn.execute(
             f"""
-            INSERT INTO option_quotes
-            SELECT
-                snapshot_id, symbol, expiration, strike, option_type,
-                bid, ask, last, volume, open_interest, multiplier,
-                provider_contract_id, quote_asof::TIMESTAMPTZ, mid, iv, gamma,
-                exclusion_reason, flags
+            INSERT INTO option_quotes ({target_cols})
+            SELECT {select_cols}
             FROM read_csv(?, header=false, columns={{{columns_sql}}})
             """,
             [csv_path],
         )
     finally:
-        os.unlink(csv_path)
+        # A cleanup failure here must not replace/hide an exception from the
+        # block above -- suppress only this secondary failure.
+        with contextlib.suppress(OSError):
+            os.unlink(csv_path)
 
 
 def init_schema(db_path: str) -> None:
@@ -108,6 +121,17 @@ def init_schema(db_path: str) -> None:
         conn = duckdb.connect(db_path)
         try:
             conn.execute(_SCHEMA_SQL)
+        finally:
+            conn.close()
+
+
+def health_check(db_path: str) -> None:
+    """Confirm the database is reachable without decoding an analytical
+    snapshot -- a health check has no reason to pay that cost."""
+    with _LOCK:
+        conn = duckdb.connect(db_path)
+        try:
+            conn.execute("SELECT 1")
         finally:
             conn.close()
 
@@ -163,7 +187,11 @@ def save_snapshot(
                     valuation_at,
                     source_mode,
                     raw_payload_json,
-                    json.dumps(dashboard_json, default=str),
+                    # No default=str fallback: dashboard_json is already
+                    # model_dump(mode="json") output, fully JSON-serializable
+                    # on its own. Silently stringifying anything else would
+                    # conceal a real serialization bug instead of raising it.
+                    json.dumps(dashboard_json),
                 ],
             )
             if priced_quotes:
