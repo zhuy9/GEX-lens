@@ -17,9 +17,10 @@ def test_fixture_provider_returns_in_scope_contracts_for_each_symbol():
         # collection_started_at -- that's real wall-clock time (R11) and
         # unrelated to the fixed synthetic valuation clock expirations were
         # generated against.
-        assert snapshot.chain_asof is not None
+        chain_asof = snapshot.chain_asof
+        assert chain_asof is not None
         for contract in snapshot.contracts:
-            dte = calendar_dte(contract.expiration, snapshot.chain_asof)
+            dte = calendar_dte(contract.expiration, chain_asof)
             assert 1 <= dte <= 60
 
 
