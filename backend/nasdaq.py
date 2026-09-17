@@ -7,6 +7,7 @@ updating that document first.
 
 import math
 import re
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -69,6 +70,59 @@ def _drilldown_expiration_and_strike(url: str) -> tuple[date, Decimal] | None:
     return expiration, strike
 
 
+@dataclass(frozen=True)
+class _PageResult:
+    """One page's validated envelope. Distinguishes a genuinely empty page
+    (rows=[]) from a malformed one (missing/null data, table, or rows) --
+    `data.get(...) or {}`-style fallbacks erase that distinction."""
+
+    last_trade_raw: str | None
+    chain_asof_raw: str | None
+    total_record: int
+    rows: tuple[dict, ...]
+
+
+def _parse_page(body: dict) -> _PageResult:
+    data = body.get("data")
+    if not isinstance(data, dict):
+        raise ProviderError("SCHEMA_ERROR", "Response missing 'data' object")
+    table = data.get("table")
+    if not isinstance(table, dict):
+        raise ProviderError("SCHEMA_ERROR", "Response missing 'data.table' object")
+    rows = table.get("rows")
+    if not isinstance(rows, list):
+        raise ProviderError("SCHEMA_ERROR", "'data.table.rows' is missing or not a list")
+    total_record = _parse_int(data.get("totalRecord"))
+    if total_record is None or total_record < 0:
+        raise ProviderError("SCHEMA_ERROR", "Missing or invalid 'data.totalRecord'")
+    return _PageResult(
+        last_trade_raw=data.get("lastTrade"),
+        chain_asof_raw=table.get("asOf"),
+        total_record=total_record,
+        rows=tuple(rows),
+    )
+
+
+def _row_identity(row: dict, current_expiration: date | None) -> tuple[date, Decimal]:
+    """(expiration, strike) identity for one data row. Shared by pagination-
+    progress tracking and normalization, so there is exactly one fallback
+    rule (drillDownURL, else the carried header + the row's own strike), not
+    two independently-maintained copies of it."""
+    url = row.get("drillDownURL")
+    parsed = _drilldown_expiration_and_strike(url) if url else None
+    if parsed is not None:
+        drilldown_expiration, strike = parsed
+        if current_expiration is not None and drilldown_expiration != current_expiration:
+            raise ProviderError(
+                "SCHEMA_ERROR",
+                f"Expiration mismatch: header={current_expiration}, drillDownURL={drilldown_expiration}",
+            )
+        return drilldown_expiration, strike
+    if current_expiration is not None and row.get("strike") is not None:
+        return current_expiration, _parse_decimal(row["strike"])
+    raise ProviderError("SCHEMA_ERROR", "Data row with no known expiration/strike")
+
+
 class NasdaqProvider:
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._client = client or httpx.Client(
@@ -96,13 +150,16 @@ class NasdaqProvider:
         }
 
         raw_pages: list[dict] = []
-        all_rows: list[dict] = []
-        seen_contract_keys: set[tuple] = set()
+        by_key: dict[tuple, OptionQuote] = {}
+        current_expiration: date | None = None
         total_bytes = 0
         underlying_price: float | None = None
         chain_asof_raw: str | None = None
         price_changed = False
         response_count = 0
+        total_record: int | None = None
+        rows_seen_total = 0
+        source_row_count = 0
 
         for page_index in range(MAX_REQUESTS):
             params = dict(params_base, offset=page_index * PAGE_LIMIT)
@@ -113,39 +170,93 @@ class NasdaqProvider:
                 raise ProviderError("INCOMPLETE_CHAIN", "Response size cap exceeded")
 
             body = self._parse_body(response)
-            data = body.get("data") or {}
             raw_pages.append(body)
+            page = _parse_page(body)
 
-            last_trade = data.get("lastTrade")
-            match = _LAST_TRADE_RE.match(last_trade or "")
+            if total_record is None:
+                total_record = page.total_record
+            elif page.total_record != total_record:
+                raise ProviderError(
+                    "INCOMPLETE_CHAIN",
+                    f"totalRecord changed mid-collection: {total_record} -> {page.total_record}",
+                )
+
+            match = _LAST_TRADE_RE.match(page.last_trade_raw or "")
             if page_index == 0:
                 if not match:
                     raise ProviderError("INVALID_UNDERLYING_PRICE", "Could not parse lastTrade field")
                 underlying_price = float(match.group(1).replace(",", ""))
-                chain_asof_raw = (data.get("table") or {}).get("asOf")
+                chain_asof_raw = page.chain_asof_raw
             elif match:
                 repeated_price = float(match.group(1).replace(",", ""))
                 if underlying_price is not None and repeated_price != underlying_price:
                     price_changed = True
 
-            rows = (data.get("table") or {}).get("rows") or []
-            all_rows.extend(rows)
+            rows_seen_total += len(page.rows)
+            keys_before = set(by_key.keys())
+            saw_data_row = False
+            for row in page.rows:
+                if row.get("expirygroup"):
+                    header = row["expirygroup"]
+                    try:
+                        current_expiration = datetime.strptime(header, _HEADER_DATE_FMT).date()
+                    except ValueError as exc:
+                        raise ProviderError(
+                            "SCHEMA_ERROR", f"Unrecognized expiration header {header!r}"
+                        ) from exc
+                    continue
 
-            data_rows = [r for r in rows if r.get("expirygroup") == ""]
-            if data_rows:
-                new_keys = {
-                    _drilldown_expiration_and_strike(r["drillDownURL"])
-                    or (r.get("expiryDate"), r.get("strike"))
-                    for r in data_rows
-                    if r.get("drillDownURL") or r.get("strike")
-                }
-                if new_keys and new_keys.issubset(seen_contract_keys):
-                    raise ProviderError("INCOMPLETE_CHAIN", "Pagination page repeated without progress")
-                seen_contract_keys |= new_keys
+                saw_data_row = True
+                source_row_count += 1
+                expiration, strike = _row_identity(row, current_expiration)
+                url = row.get("drillDownURL")
+                for option_type, prefix, provider_id in (("C", "c", url), ("P", "p", None)):
+                    quote = OptionQuote(
+                        symbol=symbol,
+                        expiration=expiration,
+                        strike=strike,
+                        option_type=option_type,
+                        bid=_parse_num(row.get(f"{prefix}_Bid")),
+                        ask=_parse_num(row.get(f"{prefix}_Ask")),
+                        last=_parse_num(row.get(f"{prefix}_Last")),
+                        volume=_parse_int(row.get(f"{prefix}_Volume")),
+                        open_interest=_parse_int(row.get(f"{prefix}_Openinterest")),
+                        multiplier=100,
+                        provider_contract_id=provider_id,
+                        quote_asof=None,
+                        flags=("MULTIPLIER_ASSUMED",),
+                    )
+                    key = (quote.symbol, quote.expiration, quote.strike, quote.option_type)
+                    existing = by_key.get(key)
+                    if existing is not None:
+                        same = (
+                            existing.bid,
+                            existing.ask,
+                            existing.last,
+                            existing.volume,
+                            existing.open_interest,
+                        ) == (quote.bid, quote.ask, quote.last, quote.volume, quote.open_interest)
+                        if not same:
+                            raise ProviderError(
+                                "CONFLICTING_CONTRACTS", f"Conflicting duplicate contract {key}"
+                            )
+                        continue
+                    by_key[key] = quote
+
+            if saw_data_row and set(by_key.keys()) == keys_before:
+                raise ProviderError("INCOMPLETE_CHAIN", "Pagination page repeated without progress")
 
             # A short page ends pagination; confirmed empirically against a
-            # real 1906-row SPY response (docs/source-contract.md).
-            if len(rows) < PAGE_LIMIT:
+            # real 1906-row SPY response (docs/source-contract.md). Require
+            # it to also match the verified totalRecord semantics (exact
+            # row total, headers + data, identical on every page) so a
+            # truncated/short response can't be mistaken for a complete one.
+            if len(page.rows) < PAGE_LIMIT:
+                if rows_seen_total != total_record:
+                    raise ProviderError(
+                        "INCOMPLETE_CHAIN",
+                        f"Short page after {rows_seen_total} rows, but totalRecord={total_record}",
+                    )
                 break
         else:
             raise ProviderError(
@@ -155,7 +266,7 @@ class NasdaqProvider:
         if underlying_price is None or not math.isfinite(underlying_price) or underlying_price <= 0:
             raise ProviderError("INVALID_UNDERLYING_PRICE", "Missing or invalid underlying price")
 
-        contracts, source_row_count = self._normalize_rows(symbol, all_rows)
+        contracts = tuple(by_key.values())
         if len(contracts) > MAX_CONTRACTS:
             raise ProviderError("INCOMPLETE_CHAIN", "Normalized contract cap exceeded")
 
@@ -211,6 +322,8 @@ class NasdaqProvider:
             body = response.json()
         except ValueError as exc:
             raise ProviderError("SCHEMA_ERROR", f"Malformed JSON: {exc}") from exc
+        if not isinstance(body, dict):
+            raise ProviderError("SCHEMA_ERROR", "Response body is not a JSON object")
         status = body.get("status") or {}
         if status.get("rCode") != 200:
             raise ProviderError(
@@ -225,71 +338,6 @@ class NasdaqProvider:
             return datetime.fromisoformat(raw)
         except ValueError:
             return None
-
-    def _normalize_rows(self, symbol: str, rows: list[dict]) -> tuple[tuple[OptionQuote, ...], int]:
-        by_key: dict[tuple, OptionQuote] = {}
-        current_expiration: date | None = None
-        source_row_count = 0
-
-        for row in rows:
-            group = row.get("expirygroup") or ""
-            if group:
-                try:
-                    current_expiration = datetime.strptime(group, _HEADER_DATE_FMT).date()
-                except ValueError as exc:
-                    raise ProviderError("SCHEMA_ERROR", f"Unrecognized expiration header {group!r}") from exc
-                continue
-
-            url = row.get("drillDownURL")
-            parsed = _drilldown_expiration_and_strike(url) if url else None
-            if parsed is not None:
-                drilldown_expiration, strike = parsed
-                if current_expiration is not None and drilldown_expiration != current_expiration:
-                    raise ProviderError(
-                        "SCHEMA_ERROR",
-                        f"Expiration mismatch: header={current_expiration}, "
-                        f"drillDownURL={drilldown_expiration}",
-                    )
-                expiration = drilldown_expiration
-            elif current_expiration is not None:
-                expiration = current_expiration
-                strike = _parse_decimal(row["strike"])
-            else:
-                raise ProviderError("SCHEMA_ERROR", "Data row with no known expiration")
-
-            source_row_count += 1
-            for option_type, prefix, provider_id in (("C", "c", url), ("P", "p", None)):
-                quote = OptionQuote(
-                    symbol=symbol,
-                    expiration=expiration,
-                    strike=strike,
-                    option_type=option_type,
-                    bid=_parse_num(row.get(f"{prefix}_Bid")),
-                    ask=_parse_num(row.get(f"{prefix}_Ask")),
-                    last=_parse_num(row.get(f"{prefix}_Last")),
-                    volume=_parse_int(row.get(f"{prefix}_Volume")),
-                    open_interest=_parse_int(row.get(f"{prefix}_Openinterest")),
-                    multiplier=100,
-                    provider_contract_id=provider_id,
-                    quote_asof=None,
-                    flags=("MULTIPLIER_ASSUMED",),
-                )
-                key = (quote.symbol, quote.expiration, quote.strike, quote.option_type)
-                existing = by_key.get(key)
-                if existing is not None:
-                    same = (
-                        existing.bid,
-                        existing.ask,
-                        existing.last,
-                        existing.volume,
-                        existing.open_interest,
-                    ) == (quote.bid, quote.ask, quote.last, quote.volume, quote.open_interest)
-                    if not same:
-                        raise ProviderError("CONFLICTING_CONTRACTS", f"Conflicting duplicate contract {key}")
-                    continue
-                by_key[key] = quote
-
-        return tuple(by_key.values()), source_row_count
 
     def _sanitize_raw_payload(self, params: dict, pages: list[dict]) -> str:
         import json

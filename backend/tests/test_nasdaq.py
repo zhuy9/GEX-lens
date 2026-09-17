@@ -17,10 +17,14 @@ from models import ChainRequest
 from provider import ProviderError
 
 
-def _body(last_trade, rows, as_of=None, rcode=200):
+def _body(last_trade, rows, as_of=None, rcode=200, total_record=None):
+    # total_record defaults to len(rows), correct for a single-page response.
+    # Multipage tests must pass the real combined total explicitly -- every
+    # page of one logical snapshot reports the same totalRecord
+    # (docs/source-contract.md), it is not "this page's row count".
     return {
         "data": {
-            "totalRecord": len(rows),
+            "totalRecord": len(rows) if total_record is None else total_record,
             "lastTrade": last_trade,
             "table": {"asOf": as_of, "headers": {}, "rows": rows},
             "filterlist": {},
@@ -148,7 +152,14 @@ def test_continuation_page_without_header_uses_carried_expiration(monkeypatch):
         offset = int(dict(request.url.params).get("offset", "0"))
         calls.append(offset)
         rows = page1 if offset == 0 else page2
-        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+        return httpx.Response(
+            200,
+            json=_body(
+                "LAST TRADE: $100.00 (AS OF JAN 15, 2026)",
+                rows,
+                total_record=len(page1) + len(page2),
+            ),
+        )
 
     provider = make_provider(handler)
     snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
@@ -188,7 +199,7 @@ def test_changed_underlying_price_on_later_page_adds_warning_and_keeps_first_pri
             if offset == 0
             else "LAST TRADE: $101.50 (AS OF JAN 15, 2026)"
         )
-        return httpx.Response(200, json=_body(last_trade, rows))
+        return httpx.Response(200, json=_body(last_trade, rows, total_record=len(page1) + len(page2)))
 
     provider = make_provider(handler)
     snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
@@ -263,6 +274,182 @@ def test_malformed_json_raises_schema_error():
     with pytest.raises(ProviderError) as exc_info:
         provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
     assert exc_info.value.code == "SCHEMA_ERROR"
+
+
+# R02: a valid lastTrade/rCode must not be enough to accept a malformed or
+# truncated envelope as a successful, complete snapshot.
+
+
+def _envelope(data):
+    return {
+        "data": data,
+        "message": None,
+        "status": {"rCode": 200, "bCodeMessage": None, "developerMessage": None},
+    }
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"lastTrade": "LAST TRADE: $100.00 (AS OF JAN 15, 2026)"},  # missing table
+        {"lastTrade": "LAST TRADE: $100.00 (AS OF JAN 15, 2026)", "table": None},  # null table
+        {
+            "lastTrade": "LAST TRADE: $100.00 (AS OF JAN 15, 2026)",
+            "table": {"asOf": None, "rows": None},  # null rows
+        },
+        {
+            "lastTrade": "LAST TRADE: $100.00 (AS OF JAN 15, 2026)",
+            "table": {"asOf": None, "rows": None},
+            "totalRecord": 2,  # a nonzero total makes the missing rows load-bearing, not incidental
+        },
+    ],
+)
+def test_malformed_envelope_is_rejected_not_accepted_as_empty(data):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_envelope(data))
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "SCHEMA_ERROR"
+
+
+def test_array_valued_response_root_is_rejected():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[1, 2, 3])
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "SCHEMA_ERROR"
+
+
+def test_row_with_no_header_and_no_drilldown_url_is_schema_error():
+    # No preceding expiration header and no drillDownURL: identity cannot be
+    # determined at all. Must raise ProviderError, not a raw KeyError/TypeError.
+    rows = [_data_row("aapl", "260115", "95.00", "00095000")]
+    rows[0]["drillDownURL"] = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "SCHEMA_ERROR"
+
+
+def test_missing_drilldown_url_falls_back_to_header_and_strike():
+    # A put-side-only row (or any row missing the URL key entirely, not just
+    # null) still resolves via the carried header + its own strike field.
+    row = _data_row("aapl", "260115", "95.00", "00095000")
+    del row["drillDownURL"]
+    rows = [_header_row("January 15, 2026"), row]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert len(snapshot.contracts) == 2
+    assert all(c.provider_contract_id is None for c in snapshot.contracts)
+
+
+def test_premature_short_page_inconsistent_with_total_record_is_rejected():
+    # The response claims far more rows exist than the (short) page actually
+    # contains -- must not be accepted as a complete two-contract snapshot.
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, total_record=1906),
+        )
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "INCOMPLETE_CHAIN"
+
+
+def test_empty_intermediate_page_inconsistent_with_total_record_is_rejected(monkeypatch):
+    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(dict(request.url.params).get("offset", "0"))
+        rows = page1 if offset == 0 else []  # page 2 goes empty without finishing
+        return httpx.Response(
+            200,
+            json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, total_record=10),
+        )
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "INCOMPLETE_CHAIN"
+
+
+def test_total_record_changing_between_pages_is_rejected(monkeypatch):
+    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+    page2 = [_data_row("aapl", "260115", "100.00", "00100000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(dict(request.url.params).get("offset", "0"))
+        rows = page1 if offset == 0 else page2
+        total = 3 if offset == 0 else 999  # inconsistent with page1's stated total
+        return httpx.Response(
+            200,
+            json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, total_record=total),
+        )
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "INCOMPLETE_CHAIN"
+
+
+def test_exact_multiple_of_page_limit_requires_a_trailing_empty_page(monkeypatch):
+    # total rows == 2 full pages exactly; neither looks "short", so a third,
+    # explicitly empty page is required to confirm completion.
+    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+    page2 = [
+        _data_row("aapl", "260115", "100.00", "00100000"),
+        _data_row("aapl", "260115", "105.00", "00105000"),
+    ]
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(dict(request.url.params).get("offset", "0"))
+        calls.append(offset)
+        rows = {0: page1, 2: page2}.get(offset, [])
+        return httpx.Response(
+            200,
+            json=_body(
+                "LAST TRADE: $100.00 (AS OF JAN 15, 2026)",
+                rows,
+                total_record=len(page1) + len(page2),
+            ),
+        )
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert calls == [0, 2, 4]
+    assert len(snapshot.contracts) == 6  # 3 strikes x 2 sides
+
+
+def test_legitimate_empty_complete_result_is_accepted():
+    # rows=[] with totalRecord=0 on the very first page: a real "nothing
+    # matched this query" result, not a malformed one.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", [], total_record=0))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert snapshot.contracts == ()
+    assert snapshot.underlying_price == 100.0
 
 
 def test_exceeding_max_requests_without_finishing_is_incomplete_chain(monkeypatch):
