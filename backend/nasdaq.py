@@ -55,6 +55,45 @@ def _parse_int(raw: object) -> int | None:
     return None if value is None else int(value)
 
 
+def _parse_count(raw: object) -> tuple[int | None, bool]:
+    """Nonnegative whole-number count (OI/volume). Returns (value, invalid).
+
+    A recognized missing sentinel is (None, False). A malformed value --
+    fractional, negative, NaN, Infinity, or otherwise unparseable -- is
+    (None, True): the source sent something wrong, not merely nothing.
+    Callers must not silently truncate a count through float/int like
+    _parse_int does; "0.9" truncating to 0 turns an invalid reading into a
+    confident (and misleading) zero exposure.
+    """
+    if raw is None:
+        return None, False
+    text = str(raw).strip()
+    if text in ("", "--", "N/A"):
+        return None, False
+    try:
+        value = float(text.replace(",", "").replace("$", ""))
+    except ValueError:
+        return None, True
+    if not math.isfinite(value) or value < 0 or value != int(value):
+        return None, True
+    return int(value), False
+
+
+def _parse_retry_after(raw: str | None) -> int | None:
+    """HTTP Retry-After delay in seconds. Not an option-count field: RFC 7231
+    only specifies a delta-seconds integer, so this stays a simple, separate
+    parser rather than reusing the strict market-data count parser."""
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return int(value)
+
+
 def _parse_decimal(raw: object) -> Decimal:
     text = str(raw).strip().replace(",", "").replace("$", "")
     return Decimal(text)
@@ -211,6 +250,13 @@ class NasdaqProvider:
                 expiration, strike = _row_identity(row, current_expiration)
                 url = row.get("drillDownURL")
                 for option_type, prefix, provider_id in (("C", "c", url), ("P", "p", None)):
+                    volume, volume_invalid = _parse_count(row.get(f"{prefix}_Volume"))
+                    open_interest, oi_invalid = _parse_count(row.get(f"{prefix}_Openinterest"))
+                    flags = ["MULTIPLIER_ASSUMED"]
+                    if volume_invalid:
+                        flags.append("INVALID_VOLUME")
+                    if oi_invalid:
+                        flags.append("INVALID_OPEN_INTEREST")
                     quote = OptionQuote(
                         symbol=symbol,
                         expiration=expiration,
@@ -219,12 +265,12 @@ class NasdaqProvider:
                         bid=_parse_num(row.get(f"{prefix}_Bid")),
                         ask=_parse_num(row.get(f"{prefix}_Ask")),
                         last=_parse_num(row.get(f"{prefix}_Last")),
-                        volume=_parse_int(row.get(f"{prefix}_Volume")),
-                        open_interest=_parse_int(row.get(f"{prefix}_Openinterest")),
+                        volume=volume,
+                        open_interest=open_interest,
                         multiplier=100,
                         provider_contract_id=provider_id,
                         quote_asof=None,
-                        flags=("MULTIPLIER_ASSUMED",),
+                        flags=tuple(flags),
                     )
                     key = (quote.symbol, quote.expiration, quote.strike, quote.option_type)
                     existing = by_key.get(key)
@@ -312,7 +358,7 @@ class NasdaqProvider:
 
     def _parse_body(self, response: httpx.Response) -> dict:
         if response.status_code == 429:
-            retry_after = _parse_int(response.headers.get("Retry-After"))
+            retry_after = _parse_retry_after(response.headers.get("Retry-After"))
             raise ProviderError("UPSTREAM_RATE_LIMITED", "Nasdaq rate limit", retry_after_seconds=retry_after)
         if response.status_code == 403:
             raise ProviderError("UPSTREAM_ACCESS_DENIED", "Nasdaq access denied (403)")

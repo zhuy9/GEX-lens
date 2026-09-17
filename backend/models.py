@@ -69,6 +69,16 @@ class OptionQuote(BaseModel):
             raise ValueError("strike must be positive")
         return v
 
+    @field_validator("volume", "open_interest")
+    @classmethod
+    def _count_nonnegative(cls, v: int | None) -> int | None:
+        # A provider adapter must produce a valid canonical count once, or
+        # flag it invalid and pass null -- not push a negative/fractional
+        # count downstream for analytics to repair.
+        if v is not None and v < 0:
+            raise ValueError("count fields must be null or nonnegative")
+        return v
+
 
 class ChainSnapshot(BaseModel):
     """A complete, normalized option-chain collection from one provider call."""

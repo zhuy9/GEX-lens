@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from analytics import (
     analyze_snapshot,
@@ -160,6 +161,17 @@ def test_gex_exposure_formula_matches_reference_values():
     assert cell.signed_proxy == pytest.approx(80_000.0)
     assert cell.gross_exposure == pytest.approx(320_000.0)
     assert cell.status == "COMPLETE"
+
+
+def test_negative_open_interest_is_rejected_at_construction():
+    # R03: an OptionQuote must never carry negative OI/volume -- a provider
+    # adapter produces a valid canonical value once (null + a quality flag
+    # for a malformed source count), or analytics could compute a negative
+    # gross exposure, which is never a real quantity.
+    with pytest.raises(ValidationError):
+        make_quote(open_interest=-1000)
+    with pytest.raises(ValidationError):
+        make_quote(volume=-1)
 
 
 def test_missing_side_yields_null_gex_cell():

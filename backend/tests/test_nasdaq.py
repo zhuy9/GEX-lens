@@ -231,6 +231,52 @@ def test_comma_formatted_values_are_parsed():
     assert call.open_interest == 1234567
 
 
+# R03: fractional/negative/NaN/Infinity counts must not silently truncate
+# into a plausible-looking (and wrong) integer or crash with a raw Python
+# exception, and a malformed count must not disable IV/gamma computation --
+# only the count itself becomes null, flagged, not the whole contract.
+@pytest.mark.parametrize(
+    "raw,expected_flag",
+    [
+        ("1.9", "INVALID_OPEN_INTEREST"),
+        ("0.9", "INVALID_OPEN_INTEREST"),
+        ("-1000", "INVALID_OPEN_INTEREST"),
+        ("NaN", "INVALID_OPEN_INTEREST"),
+        ("Infinity", "INVALID_OPEN_INTEREST"),
+        ("garbage", "INVALID_OPEN_INTEREST"),
+    ],
+)
+def test_malformed_open_interest_becomes_null_and_flagged_not_truncated(raw, expected_flag):
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+    rows[1]["c_Openinterest"] = raw
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+
+    call = next(c for c in snapshot.contracts if c.option_type == "C")
+    assert call.open_interest is None
+    assert expected_flag in call.flags
+    put = next(c for c in snapshot.contracts if c.option_type == "P")
+    assert "INVALID_OPEN_INTEREST" not in put.flags  # only the malformed side is flagged
+
+
+def test_zero_open_interest_is_not_flagged_invalid():
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+    rows[1]["c_Openinterest"] = "0"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    call = next(c for c in snapshot.contracts if c.option_type == "C")
+    assert call.open_interest == 0
+    assert "INVALID_OPEN_INTEREST" not in call.flags
+
+
 def test_timeout_raises_upstream_timeout():
     # M3.3
     def handler(request: httpx.Request) -> httpx.Response:

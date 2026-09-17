@@ -267,7 +267,11 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
         except ProviderError as exc:
             if exc.code == "UPSTREAM_RATE_LIMITED":
                 retry_after = exc.retry_after_seconds
-                effective = retry_after if (retry_after is not None and retry_after >= 60) else 300
+                # PRD 5.3: use a valid Retry-After value, clamped to a 60s
+                # floor; only fall back to 300s when there is no valid value
+                # at all. A short-but-valid delay (e.g. 5s) must not be
+                # discarded in favor of the 300s default.
+                effective = max(retry_after, 60) if retry_after is not None else 300
                 gate.extend_deadline(effective)
                 raise HTTPException(
                     status_code=503,

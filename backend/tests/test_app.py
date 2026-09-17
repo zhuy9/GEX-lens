@@ -204,3 +204,27 @@ def test_provider_rate_limit_extends_cooldown_and_returns_503(tmp_path):
     server_time = datetime.fromisoformat(config["server_time"])
     # the 120s provider retry_after should win over the 60s baseline cooldown
     assert (not_before - server_time).total_seconds() > 60
+
+
+def test_short_valid_retry_after_is_clamped_to_60_not_discarded_to_300(tmp_path):
+    # R03/PRD 5.3: "a valid Retry-After value, subject to a minimum of 60
+    # seconds" means clamp a short valid value, not treat it as absent.
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(error=ProviderError("UPSTREAM_RATE_LIMITED", "rate limited", retry_after_seconds=5))
+    client = TestClient(create_app(settings, provider=stub))
+
+    response = client.post("/api/dashboard/SPY/refresh")
+    assert response.status_code == 503
+    assert response.json()["error"]["retry_after_seconds"] == 60
+
+
+def test_missing_retry_after_falls_back_to_300(tmp_path):
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(
+        error=ProviderError("UPSTREAM_RATE_LIMITED", "rate limited", retry_after_seconds=None)
+    )
+    client = TestClient(create_app(settings, provider=stub))
+
+    response = client.post("/api/dashboard/SPY/refresh")
+    assert response.status_code == 503
+    assert response.json()["error"]["retry_after_seconds"] == 300
