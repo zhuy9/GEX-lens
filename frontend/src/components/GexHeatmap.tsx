@@ -158,6 +158,19 @@ export function GexHeatmap({ gex, mode, spot, valuationAt }: GexHeatmapProps) {
 	// Highest strike first, like an order book.
 	const rowIndices = [...visibleIndices].reverse();
 
+	// Insert a divider row at spot's exact position (it usually falls between
+	// two strikes, not on one).
+	const rows: (number | "spot")[] = [];
+	let spotPlaced = false;
+	for (const strikeIndex of rowIndices) {
+		if (!spotPlaced && Number(gex.strikes[strikeIndex]) < spot) {
+			rows.push("spot");
+			spotPlaced = true;
+		}
+		rows.push(strikeIndex);
+	}
+	if (!spotPlaced) rows.push("spot");
+
 	return (
 		<div className="flex flex-col gap-2">
 			<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -214,16 +227,24 @@ export function GexHeatmap({ gex, mode, spot, valuationAt }: GexHeatmapProps) {
 						</tr>
 					</thead>
 					<tbody>
-						{rowIndices.map((strikeIndex) => {
+						{rows.map((row) => {
+							if (row === "spot") {
+								return (
+									<tr key="spot" className="bg-primary/10">
+										<td
+											colSpan={gex.expirations.length + 1}
+											className="sticky left-0 border-t border-b border-dashed border-primary px-2 py-1 text-center font-medium text-primary"
+										>
+											Underlying ${spot.toFixed(2)}
+										</td>
+									</tr>
+								);
+							}
+							const strikeIndex = row;
 							const strike = gex.strikes[strikeIndex];
-							const isSpotRow = strikeIndex === nearestIndex;
 							return (
 								<tr key={strike}>
-									<td
-										className={`sticky left-0 z-10 border-r px-2 py-1 font-medium whitespace-nowrap ${
-											isSpotRow ? "bg-primary/10 text-primary" : "bg-background"
-										}`}
-									>
+									<td className="sticky left-0 z-10 border-r bg-background px-2 py-1 font-medium whitespace-nowrap">
 										{fmtStrike(strike)}
 									</td>
 									{gex.expirations.map((expiration, expIndex) => {
