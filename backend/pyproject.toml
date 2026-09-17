@@ -1,0 +1,14 @@
+[tool.ruff]
+line-length = 110
+# Kept at the lowest interpreter actually used to run/verify this project so far
+# (Python 3.10, per README). Bump to "py312" once the PRD-mandated 3.12 runtime
+# is verified locally; do not let the linter suggest 3.11+-only syntax (e.g.
+# datetime.UTC) that would break on an untested-but-still-in-use interpreter.
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

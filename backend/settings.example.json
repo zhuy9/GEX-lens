@@ -1,0 +1,9 @@
+{
+  "source_mode": "fixture",
+  "db_path": "data/options.fixture.duckdb",
+  "symbols": ["SPY", "QQQ", "AAPL"],
+  "default_symbol": "SPY",
+  "refresh_min_interval_seconds": 60,
+  "risk_free_rate": 0.04,
+  "dividend_yields": {"SPY": 0.0, "QQQ": 0.0, "AAPL": 0.0}
+}
