@@ -149,19 +149,79 @@ inventing "pagination behavior," so this stays open rather than guessed.
 | ID | Status | Notes |
 |---|---|---|
 | M0.1 | Partial | Endpoint and one query-param combination recorded; verification date 2026-09-16. Access basis is the owner's personal-use judgment call on the website-backed URL, not the documented authenticated API. |
-| M0.2 | Not met | Only AAPL verified. SPY and QQQ samples not yet provided. |
-| M0.3 | Not met | Field paths for the visible 58 rows are recorded, but complete-pagination behavior is unverified (see above). |
+| M0.2 | Partial | Samples obtained for all three symbols; `assetclass=stocks` (AAPL) vs. `assetclass=etf` (SPY/QQQ) confirmed. Full-chain coverage per symbol still unverified (see M0.3). |
+| M0.3 | Not met | Field paths are recorded for all three symbols, but complete-pagination behavior is unverified, and `money=at` was found to violate the required 0.80x-1.20x strike scope (see below). Retest with `money=all`/no filter and a larger `limit` pending. |
 | M0.4 | Met for AAPL | `data.lastTrade` (spot) and `c_Last`/`p_Last` (premiums) are structurally distinct paths; exact locations recorded above. OI-date and multiplier gaps recorded above. |
 | M0.5 | BLOCKED | Cannot assign PASS while M0.2/M0.3 are open; PRD disallows representing incomplete verification as PASS. |
 | M0.6 | Met for AAPL only | First-page `data.lastTrade` yields a finite positive price (332.41) with no separate quote call. SPY/QQQ unconfirmed. |
 
 ## Needed to close M0
 
-1. SPY and QQQ samples from the same endpoint (same query shape is fine).
-2. One more AAPL sample with a much larger `limit` (e.g. `limit=3000`) to
-   check whether the full 421-record chain returns in one call, or whether
-   the server caps it below that.
-3. If (2) still truncates: a sample using explicit `fromdate`/`todate` query
-   parameters, to test whether they are real, honored request parameters.
-4. Ideally, one error-case response (invalid symbol, or a too-fast retry) to
+1. ~~SPY and QQQ samples from the same endpoint~~ — done, see below.
+2. Confirm whether `fromdate`/`todate` reliably return every expiration in
+   range once `limit` is large enough (see below — inconclusive so far).
+3. Ideally, one error-case response (invalid symbol, or a too-fast retry) to
    see the real shape of `status.rCode` / `bCodeMessage` on failure.
+
+## SPY and QQQ samples (2026-09-16)
+
+Fetched with:
+
+```
+GET https://api.nasdaq.com/api/quote/{symbol}/option-chain?assetclass=etf&limit=60&fromdate=2026-09-16&todate=2026-09-30&excode=oprac&callput=callput&money=at&type=all
+```
+
+Stored at `docs/samples/spy-option-chain.json` and `docs/samples/qqq-option-chain.json` (git-ignored).
+
+- `assetclass=etf` for SPY/QQQ vs. `assetclass=stocks` for AAPL — confirms
+  the request needs a per-symbol asset-class parameter (M0.2). This app
+  would need to know each configured symbol's asset class; not yet decided
+  where that mapping lives.
+- Both samples confirm the same field paths recorded above for AAPL
+  (`data.lastTrade`, row shape, `drillDownURL` call-only identifier, etc.).
+  SPY: spot `754.05`. QQQ: spot `704.72`.
+- `fromdate`/`todate` appear to have *some* effect — both responses show
+  only **one** expiration group (`September 16, 2026`) before `limit=60`
+  cuts off, rather than jumping across years like the unscoped AAPL request
+  did. But since `limit=60` is also small enough to be the actual cause, this
+  is not yet confirmed as a real, honored parameter — needs a retest with a
+  larger `limit` to see if a second in-range expiration (e.g. Sep 18) shows
+  up.
+
+### Conflict with PRD Section 3's fixed strike scope
+
+`money=at` ("Near the Money") does **not** cover the PRD's required
+`0.80 * spot <= strike <= 1.20 * spot` band:
+
+| Symbol | Spot | Required band (0.80x-1.20x) | `money=at` actual range | Covers required band? |
+|---|---|---|---|---|
+| SPY | 754.05 | 603.24 - 904.86 | 680 - 768 | **No** |
+| QQQ | 704.72 | 563.78 - 845.66 | 635 - 693 | **No** |
+
+SPY's near-the-money strikes also show the increment pattern: $5 farther from
+spot (680, 685, 690, ...), narrowing to $1 right around spot (718-768). A
+full 0.80x-1.20x band at that same pattern would need roughly 90-110 strike
+rows per expiration (not 59), and this MVP needs that across every
+expiration in the 1-60 DTE window (SPY/QQQ typically have same-day, Mon/Wed/Fri
+weekly, and monthly expirations, so several per symbol) — likely several
+hundred rows per symbol, not 100. This is well within the PRD's 10-request /
+10 MiB / 10,000-contract collection caps if paginated with a large `limit`
+per request and `money=all` (or `money` omitted), but not with `money=at`.
+
+**Decision (2026-09-16, owner):** keep the PRD's 0.80x-1.20x band. Use
+`money=all` (or omit `money`) and raise `limit` substantially (test 1000+)
+instead of `money=at`.
+
+### Next verification needed
+
+A sample per symbol using `money=all` (or no `money` param) with a much
+larger `limit` (try 1000), still scoped by `fromdate`/`todate` to a window
+inside 1-60 DTE, to confirm:
+
+1. The full 0.80x-1.20x strike band appears for at least the first
+   expiration, within one request.
+2. Whether a second in-range expiration (e.g. SPY/QQQ's next weekly, a few
+   days after Sep 16) appears in the same response once `limit` is no longer
+   the bottleneck — this is still needed to confirm `fromdate`/`todate` are
+   real, honored parameters (M0.3), not just an artifact of `limit=60`
+   cutting off after the first expiration.
