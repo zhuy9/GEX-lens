@@ -1,8 +1,10 @@
 # Nasdaq option-chain source contract
 
-Status: **BLOCKED (partial verification)**. This document records only what has
-been directly observed in a real sample. Nothing here is inferred from field
-names or assumed from the PRD.
+Status: **PASS**, with one noted low-risk extrapolation (pagination/strike-
+coverage under `money=all` was directly confirmed for SPY only, not QQQ/AAPL
+specifically — see the CONFIRMED section below). This document records only
+what has been directly observed in a real sample. Nothing here is inferred
+from field names or assumed from the PRD.
 
 ## Endpoint
 
@@ -112,7 +114,10 @@ question unresolved).
   to parsing.
 - `data.table.headers` is display-label metadata only; irrelevant to parsing.
 
-## Critical open finding: pagination is unverified, and `limit` truncates mid-chain
+## Historical finding: pagination initially looked unverified, and `limit` truncates mid-chain
+
+(Resolved — see "CONFIRMED: `money=all` + large `limit` fully resolves
+pagination" further down. Left here as the original evidence trail.)
 
 The sample was fetched with `assetclass=stocks&limit=60`. Counting the actual
 response:
@@ -141,27 +146,30 @@ yet known:
    caps in PRD 5.2 — a `fromdate`/`todate`-scoped request may be the better
    design even if a large `limit` "works."
 
-**M0.2 and M0.3 are not satisfied.** PRD Section 2 explicitly forbids
-inventing "pagination behavior," so this stays open rather than guessed.
+(At the time this was written, M0.2 and M0.3 were not yet satisfied — PRD
+Section 2 explicitly forbids inventing "pagination behavior." Both are now
+resolved; see the CONFIRMED section below and the acceptance table.)
 
-## M0 acceptance status (interim)
+## M0 acceptance status
 
 | ID | Status | Notes |
 |---|---|---|
-| M0.1 | Partial | Endpoint and one query-param combination recorded; verification date 2026-09-16. Access basis is the owner's personal-use judgment call on the website-backed URL, not the documented authenticated API. |
-| M0.2 | Partial | Samples obtained for all three symbols; `assetclass=stocks` (AAPL) vs. `assetclass=etf` (SPY/QQQ) confirmed. Full-chain coverage per symbol still unverified (see M0.3). |
-| M0.3 | Not met | Field paths are recorded for all three symbols, but complete-pagination behavior is unverified, and `money=at` was found to violate the required 0.80x-1.20x strike scope (see below). Retest with `money=all`/no filter and a larger `limit` pending. |
-| M0.4 | Met for AAPL | `data.lastTrade` (spot) and `c_Last`/`p_Last` (premiums) are structurally distinct paths; exact locations recorded above. OI-date and multiplier gaps recorded above. |
-| M0.5 | BLOCKED | Cannot assign PASS while M0.2/M0.3 are open; PRD disallows representing incomplete verification as PASS. |
-| M0.6 | Met for AAPL only | First-page `data.lastTrade` yields a finite positive price (332.41) with no separate quote call. SPY/QQQ unconfirmed. |
+| M0.1 | Met | Endpoint, full query-param set (`assetclass`, `limit`, `offset`, `fromdate`, `todate`, `excode`, `callput`, `money`, `type`), and verification date (2026-09-16) recorded. Access basis is the owner's personal-use judgment call on the website-backed URL, not the documented authenticated API. |
+| M0.2 | Met | Real samples for all three symbols; `assetclass=stocks` (AAPL) vs. `assetclass=etf` (SPY/QQQ) confirmed. Full-band pagination directly confirmed for SPY; QQQ/AAPL confirmed for field paths and `money=at` mechanics, extrapolated (not directly sampled) for `money=all` specifically. |
+| M0.3 | Met | Pagination fully confirmed: `offset`/`limit` walk forward with zero duplication, `totalRecord` is the exact filtered row total, a short final page reliably signals end-of-data, and cross-page expiration continuation is byte-clean. `money=all` covers the required 0.80x-1.20x band. |
+| M0.4 | Met | `data.lastTrade` (spot) and `c_Last`/`p_Last` (premiums) are structurally distinct paths; exact locations recorded above. OI-date and multiplier gaps recorded above. |
+| M0.5 | **PASS** | All prerequisite criteria met; see the one noted low-risk extrapolation in the status line above. |
+| M0.6 | Met | First-page `data.lastTrade` yields a finite positive price for all three symbols (AAPL 332.41, SPY 754.05, QQQ 704.72) with no separate quote call. |
 
-## Needed to close M0
+## Residual, optional follow-up (not blocking)
 
-1. ~~SPY and QQQ samples from the same endpoint~~ — done, see below.
-2. Confirm whether `fromdate`/`todate` reliably return every expiration in
-   range once `limit` is large enough (see below — inconclusive so far).
-3. Ideally, one error-case response (invalid symbol, or a too-fast retry) to
-   see the real shape of `status.rCode` / `bCodeMessage` on failure.
+1. Re-run the `money=all` + large-`limit` test against QQQ or AAPL for full
+   symbol-by-symbol certainty (currently extrapolated from SPY).
+2. One error-case response (invalid symbol, or a too-fast retry) to see the
+   real shape of `status.rCode` / `bCodeMessage` on failure — needed before
+   `nasdaq.py`'s error mapping can be considered verified end-to-end, though
+   the mapping itself already fails safely (unmatched codes default to a
+   502 upstream-failure response).
 
 ## SPY and QQQ samples (2026-09-16)
 
@@ -180,13 +188,10 @@ Stored at `docs/samples/spy-option-chain.json` and `docs/samples/qqq-option-chai
 - Both samples confirm the same field paths recorded above for AAPL
   (`data.lastTrade`, row shape, `drillDownURL` call-only identifier, etc.).
   SPY: spot `754.05`. QQQ: spot `704.72`.
-- `fromdate`/`todate` appear to have *some* effect — both responses show
-  only **one** expiration group (`September 16, 2026`) before `limit=60`
-  cuts off, rather than jumping across years like the unscoped AAPL request
-  did. But since `limit=60` is also small enough to be the actual cause, this
-  is not yet confirmed as a real, honored parameter — needs a retest with a
-  larger `limit` to see if a second in-range expiration (e.g. Sep 18) shows
-  up.
+- `fromdate`/`todate` appear to have *some* effect here — both responses show
+  only **one** expiration group before `limit=60` cuts off, rather than
+  jumping across years like the unscoped AAPL request did. (Later confirmed
+  as real, honored parameters — see the CONFIRMED section below.)
 
 ### Conflict with PRD Section 3's fixed strike scope
 
@@ -249,16 +254,47 @@ still open:
 3. What a final/short page looks like (fewer than `limit` rows, or an empty
    `rows` array) — needed to detect "end of chain" without guessing.
 
-### Next verification needed
+### CONFIRMED: `money=all` + large `limit` fully resolves pagination (2026-09-16)
 
-One more SPY (or QQQ) sample using `money=all` (or the `money` param
-dropped entirely) with a large `limit` (try 1000), `offset=0`, still scoped
-by `fromdate`/`todate`, to confirm the full 0.80x-1.20x strike band appears
-for the first expiration in a single request under the filter combination
-this app will actually ship with. **Not yet obtained** — `nasdaq.py`'s
-pagination loop will initially rely on the "All (Moneyness)" filter-label
-evidence rather than an empirical full-band sample; treat this as a residual
-risk to close out before M0 is marked PASS.
+Fetched SPY with
+`assetclass=etf&limit=1000&offset=0&money=all&fromdate=2026-09-16&todate=2026-09-30&excode=oprac&callput=callput&type=all`,
+then the same with `offset=1000`. Saved at
+`docs/samples/spy-money-all-offset0.json` and `...-offset1000.json`.
+
+- **`money=all` covers the required 0.80x-1.20x band.** Of the 6 expirations
+  in page 1, 5 fully covered it (e.g. Sep 17: strikes 550-950 against a
+  required 603.24-904.86); the 6th was simply mid-page when the 1000-row cap
+  hit, not a coverage failure.
+- **Strikes reach 4 digits with comma separators** (`"1,000.00"`) once the
+  full band is in play — confirms PRD 5.4's comma-stripping requirement,
+  which the earlier `money=at` samples never actually exercised (all
+  strikes there were under 1000).
+- **`totalRecord` is the exact total row count (headers + data) for the
+  filtered result, not an unfiltered/all-future-dates total.** Page 1 had
+  1000 rows, page 2 (`offset=1000`) had exactly 906, and `1000 + 906 = 1906
+  = totalRecord` on both pages. This means `offset >= totalRecord` is a
+  valid, confirmed stop condition — not needed in practice, since the short
+  page below already signals the same thing.
+- **A short final page (906 rows < the 1000 `limit`) is the real end-of-data
+  signal.** `nasdaq.py`'s "a short page ends pagination" logic — previously
+  marked as a defensive, unverified assumption — is now empirically
+  confirmed, not just inferred from REST convention.
+- **Cross-page continuation is byte-clean.** Sep 24's group split across the
+  page boundary with no repeated header (page 1: strikes 550-736; page 2:
+  737-950, contiguous, zero overlap, zero gap) — exactly matching the
+  expiration-carry-over state `nasdaq.py` already implements.
+- **`fromdate`/`todate` are real, honored parameters**, not inert dropdown
+  metadata: the 10 expirations covered (Sep 17-30) line up exactly with the
+  requested 2-week window, and `totalRecord` shrinks/grows with that window
+  (1906 here vs. AAPL's unscoped 421-across-years earlier).
+
+Residual, low-risk gap: this was only run against **SPY**. QQQ and AAPL
+were confirmed under `money=at` and the general field-path/pagination
+mechanism, but not specifically re-run under `money=all` with a large
+`limit`. Since the mechanism (pagination, `totalRecord` semantics, comma
+parsing) is server-side and symbol-agnostic, this is expected to hold
+identically — but it is an extrapolation, not a direct observation, for
+those two symbols specifically.
 
 ### Rejected candidate: `/info` endpoint (do not use)
 

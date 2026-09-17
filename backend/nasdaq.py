@@ -143,9 +143,8 @@ class NasdaqProvider:
                     raise ProviderError("INCOMPLETE_CHAIN", "Pagination page repeated without progress")
                 seen_contract_keys |= new_keys
 
-            # ponytail: a short page ends pagination; this exact end-of-data
-            # signal is not yet empirically confirmed (docs/source-contract.md).
-            # The request/byte/dedup caps above fail safely if this is wrong.
+            # A short page ends pagination; confirmed empirically against a
+            # real 1906-row SPY response (docs/source-contract.md).
             if len(rows) < PAGE_LIMIT:
                 break
         else:
