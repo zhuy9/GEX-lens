@@ -41,16 +41,21 @@ function fmtStrike(strike: string): string {
 	return `$${n % 1 === 0 ? n.toFixed(0) : n.toFixed(2)}`;
 }
 
-/** Display-only approximation (UTC calendar days); the server owns the
- * authoritative NY-timezone calendar_dte used for pricing/eligibility. */
+const NY_DATE_FORMAT = new Intl.DateTimeFormat("en-CA", {
+	timeZone: "America/New_York",
+	year: "numeric",
+	month: "2-digit",
+	day: "2-digit",
+});
+
+/** Mirrors the backend's calendar_dte exactly: NY-local calendar date of
+ * valuationAt, diffed in whole days against expiration. A UTC-based diff
+ * would disagree by a day whenever valuationAt's UTC date and its NY date
+ * fall on different calendar days (e.g. any time before ~20:00 UTC). */
 function displayDte(expirationIso: string, valuationAtIso: string): number {
 	const expUtcMidnight = Date.parse(`${expirationIso}T00:00:00Z`);
-	const val = new Date(valuationAtIso);
-	const valUtcMidnight = Date.UTC(
-		val.getUTCFullYear(),
-		val.getUTCMonth(),
-		val.getUTCDate(),
-	);
+	const valNyDateIso = NY_DATE_FORMAT.format(new Date(valuationAtIso)); // "YYYY-MM-DD"
+	const valUtcMidnight = Date.parse(`${valNyDateIso}T00:00:00Z`);
 	return Math.round((expUtcMidnight - valUtcMidnight) / 86_400_000);
 }
 
@@ -128,13 +133,16 @@ export const GexHeatmap = memo(function GexHeatmap({
 }: GexHeatmapProps) {
 	const [expanded, setExpanded] = useState(false);
 
-	const bound = useMemo(() => {
+	const { bound, hasUsableData } = useMemo(() => {
 		const values = gex.cells
 			.flat()
 			.map((cell) => cellRaw(cell, mode))
 			.filter((v): v is number => v !== null)
 			.map(Math.abs);
-		return values.length > 0 ? Math.max(...values) : 1;
+		return {
+			bound: values.length > 0 ? Math.max(...values) : 1,
+			hasUsableData: values.length > 0,
+		};
 	}, [gex, mode]);
 
 	if (gex.strikes.length === 0 || gex.expirations.length === 0) {
@@ -181,25 +189,25 @@ export const GexHeatmap = memo(function GexHeatmap({
 			<div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
 				{mode === "signed" ? (
 					<div className="flex items-center gap-2">
-						<span>Put-heavy</span>
+						<span>Put-heavy ({fmtDollarsCompact(-bound)})</span>
 						<div
 							className="h-2 w-28 rounded-full"
 							style={{
 								background: `linear-gradient(to right, rgb(${NEG_COLOR.join(",")}), rgb(${NEUTRAL.join(",")}), rgb(${POS_COLOR.join(",")}))`,
 							}}
 						/>
-						<span>Call-heavy</span>
+						<span>Call-heavy ({fmtDollarsCompact(bound)})</span>
 					</div>
 				) : (
 					<div className="flex items-center gap-2">
-						<span>Low</span>
+						<span>{fmtDollarsCompact(0)}</span>
 						<div
 							className="h-2 w-28 rounded-full"
 							style={{
 								background: `linear-gradient(to right, rgb(${NEUTRAL.join(",")}), rgb(${GROSS_COLOR.join(",")}))`,
 							}}
 						/>
-						<span>High</span>
+						<span>High ({fmtDollarsCompact(bound)})</span>
 					</div>
 				)}
 				<Button
@@ -210,6 +218,21 @@ export const GexHeatmap = memo(function GexHeatmap({
 					{expanded ? "Collapse" : `Expand (${gex.strikes.length} strikes)`}
 				</Button>
 			</div>
+
+			<div className="text-xs text-muted-foreground">
+				USD delta-notional change per 1% underlying move ·{" "}
+				{mode === "signed"
+					? "Call-minus-put GEX proxy"
+					: "Gross OI-weighted gamma"}
+			</div>
+
+			{!hasUsableData && (
+				<div className="rounded-md border border-dashed px-3 py-2 text-center text-xs text-muted-foreground">
+					No complete GEX cells for this mode in this snapshot -- not the same
+					as no data. Hover any cell for its exclusion reason, or check the
+					Snapshot card's quality counts above.
+				</div>
+			)}
 
 			<div className="max-h-[520px] overflow-auto rounded-md border">
 				<table className="w-full border-collapse text-xs">

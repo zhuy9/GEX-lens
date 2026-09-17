@@ -1,5 +1,5 @@
 import type { Config, Data, Layout } from "plotly.js";
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import Plot from "react-plotly.js";
 import type { SurfaceData } from "@/types";
 
@@ -26,6 +26,13 @@ const CONFIG: Partial<Config> = {
 };
 
 export const IvSurface = memo(function IvSurface({ surface }: IvSurfaceProps) {
+	// Plotly can fail to initialize (e.g. no WebGL) without throwing a React
+	// render exception -- react-plotly.js surfaces that via onError instead,
+	// which an error boundary alone can never catch.
+	const [plotError, setPlotError] = useState(false);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: surface is a prop, not a module-scope value; a new snapshot must clear a stale plot error.
+	useEffect(() => setPlotError(false), [surface]);
+
 	const observedTrace = useMemo(() => {
 		const x = surface.observations.map((o) => o.k);
 		const y = surface.observations.map((o) => o.dte);
@@ -46,6 +53,18 @@ export const IvSurface = memo(function IvSurface({ surface }: IvSurfaceProps) {
 
 	const data = useMemo((): Data[] => {
 		if (zPercent === null) return [];
+		// One hover string per grid cell, shaped like zPercent, so a point on
+		// the interpolated surface can be inspected too -- previously only
+		// the observed-point markers had hover text at all.
+		const surfaceHoverText = zPercent.map((row, rowIndex) =>
+			row.map((ivPct, colIndex) => {
+				const expiration = surface.expirations[rowIndex] ?? "Unknown";
+				const dte = surface.dte[rowIndex];
+				const k = surface.k[colIndex];
+				const ivText = ivPct === null ? "Unknown" : `${ivPct.toFixed(2)}%`;
+				return `Surface (interpolated)<br>Expiration ${expiration}<br>Moneyness (k) ${k.toFixed(4)}<br>DTE ${dte.toFixed(2)}<br>IV ${ivText}`;
+			}),
+		);
 		return [
 			{
 				type: "surface",
@@ -54,7 +73,12 @@ export const IvSurface = memo(function IvSurface({ surface }: IvSurfaceProps) {
 				z: zPercent,
 				connectgaps: false,
 				showscale: false,
-				hoverinfo: "skip",
+				// @types/plotly.js types `text` as string | string[] even for a
+				// surface trace, but Plotly.js itself accepts a 2D matrix shaped
+				// like z at runtime -- this is a type-definition gap, not a
+				// runtime workaround.
+				text: surfaceHoverText as unknown as string[],
+				hovertemplate: "%{text}<extra></extra>",
 				opacity: 0.85,
 			},
 			{
@@ -68,7 +92,7 @@ export const IvSurface = memo(function IvSurface({ surface }: IvSurfaceProps) {
 				marker: { size: 3, color: "black" },
 			},
 		];
-	}, [surface.k, surface.dte, zPercent, observedTrace]);
+	}, [surface.k, surface.dte, surface.expirations, zPercent, observedTrace]);
 
 	if (surface.status === "INSUFFICIENT_DATA" || surface.iv === null) {
 		return (
@@ -80,6 +104,14 @@ export const IvSurface = memo(function IvSurface({ surface }: IvSurfaceProps) {
 		);
 	}
 
+	if (plotError) {
+		return (
+			<div className="flex h-96 items-center justify-center text-center text-sm text-muted-foreground">
+				This panel failed to render. Your browser or GPU may not support WebGL.
+			</div>
+		);
+	}
+
 	return (
 		<Plot
 			data={data}
@@ -87,6 +119,7 @@ export const IvSurface = memo(function IvSurface({ surface }: IvSurfaceProps) {
 			style={{ width: "100%", height: "100%" }}
 			useResizeHandler
 			config={CONFIG}
+			onError={() => setPlotError(true)}
 		/>
 	);
 });

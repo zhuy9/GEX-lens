@@ -222,7 +222,7 @@ export default function App() {
 							<CardTitle>GEX Heatmap</CardTitle>
 						</CardHeader>
 						<CardContent>
-							<ChartErrorBoundary>
+							<ChartErrorBoundary resetKey={dashboard.snapshot_id}>
 								<GexHeatmap
 									gex={dashboard.gex}
 									mode={gexMode}
@@ -238,7 +238,10 @@ export default function App() {
 							<CardTitle>Implied Volatility Surface</CardTitle>
 						</CardHeader>
 						<CardContent className="h-96">
-							<ChartErrorBoundary>
+							<ChartErrorBoundary
+								resetKey={dashboard.snapshot_id}
+								message="This panel failed to render. Your browser or GPU may not support WebGL."
+							>
 								<Suspense fallback={<Skeleton className="h-full w-full" />}>
 									<IvSurface surface={dashboard.surface} />
 								</Suspense>
