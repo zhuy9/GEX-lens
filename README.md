@@ -69,7 +69,7 @@ backend on port 8000, so start the backend first.
 cd backend
 pytest
 ruff check .
-ty check .
+ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py
 cd ..\frontend
 npm run lint
 npm run build

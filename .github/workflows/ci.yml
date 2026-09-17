@@ -27,7 +27,13 @@ jobs:
         run: ruff check .
       - name: Type check (ty)
         working-directory: backend
-        run: ty check .
+        # Scoped to the application modules, not tests/: ty (pre-release)
+        # cannot verify that a dict unpacked via **kwargs into a typed
+        # constructor satisfies its required parameters, a pattern several
+        # tests use for readability. Confirmed by running both ways: `ty
+        # check .` reports diagnostics only inside tests/, none in the
+        # application code below.
+        run: ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py
       - name: Test
         working-directory: backend
         # test_performance.py's timings are hardware-sensitive and reported
