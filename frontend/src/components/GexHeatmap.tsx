@@ -8,6 +8,7 @@ interface GexHeatmapProps {
 }
 
 const MILLIONS = 1_000_000;
+const THOUSAND = 1_000;
 
 function fmtMillions(value: number | null): string {
 	if (value === null) return "Unknown";
@@ -18,9 +19,22 @@ function fmtCount(value: number | null): string {
 	return value === null ? "Unknown" : value.toLocaleString();
 }
 
-function cellValue(cell: GexCell | null, mode: GexMode): number | null {
+/** Short on-cell label, e.g. "44.1M", "972K", "-781" (matches reference chart). */
+function fmtCompact(value: number | null): string {
+	if (value === null) return "";
+	const abs = Math.abs(value);
+	if (abs >= MILLIONS) return `${(value / MILLIONS).toFixed(1)}M`;
+	if (abs >= THOUSAND) return `${(value / THOUSAND).toFixed(0)}K`;
+	return `${value.toFixed(0)}`;
+}
+
+function cellRaw(cell: GexCell | null, mode: GexMode): number | null {
 	if (cell === null) return null;
-	const raw = mode === "signed" ? cell.signed_proxy : cell.gross_exposure;
+	return mode === "signed" ? cell.signed_proxy : cell.gross_exposure;
+}
+
+function cellValue(cell: GexCell | null, mode: GexMode): number | null {
+	const raw = cellRaw(cell, mode);
 	return raw === null ? null : raw / MILLIONS;
 }
 
@@ -48,21 +62,32 @@ function cellHoverText(
 }
 
 export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
-	const { z, text, zmin, zmax } = useMemo(() => {
-		const z = gex.cells.map((row) => row.map((cell) => cellValue(cell, mode)));
-		const text = gex.cells.map((row, rowIndex) =>
-			row.map((cell, colIndex) =>
-				cellHoverText(cell, gex.strikes[colIndex], gex.expirations[rowIndex]),
+	const { z, text, hoverText, zmin, zmax } = useMemo(() => {
+		// Transposed relative to gex.cells (which is [expiration][strike]) so
+		// strike lands on the y-axis and expiration on the x-axis.
+		const z = gex.strikes.map((_, strikeIndex) =>
+			gex.expirations.map((_, expIndex) =>
+				cellValue(gex.cells[expIndex][strikeIndex], mode),
+			),
+		);
+		const text = gex.strikes.map((_, strikeIndex) =>
+			gex.expirations.map((_, expIndex) =>
+				fmtCompact(cellRaw(gex.cells[expIndex][strikeIndex], mode)),
+			),
+		);
+		const hoverText = gex.strikes.map((strike, strikeIndex) =>
+			gex.expirations.map((expiration, expIndex) =>
+				cellHoverText(gex.cells[expIndex][strikeIndex], strike, expiration),
 			),
 		);
 		const values = z.flat().filter((v): v is number => v !== null);
 		const maxAbs = values.length > 0 ? Math.max(...values.map(Math.abs)) : 0;
 		if (mode === "signed") {
 			const bound = maxAbs > 0 ? maxAbs : 1;
-			return { z, text, zmin: -bound, zmax: bound };
+			return { z, text, hoverText, zmin: -bound, zmax: bound };
 		}
 		const bound = maxAbs > 0 ? maxAbs : 1;
-		return { z, text, zmin: 0, zmax: bound };
+		return { z, text, hoverText, zmin: 0, zmax: bound };
 	}, [gex, mode]);
 
 	if (gex.strikes.length === 0 || gex.expirations.length === 0) {
@@ -78,11 +103,14 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 			data={[
 				{
 					type: "heatmap",
-					x: gex.strikes,
-					y: gex.expirations,
+					x: gex.expirations,
+					y: gex.strikes,
 					z,
 					text,
-					hovertemplate: "%{text}<extra></extra>",
+					texttemplate: "%{text}",
+					textfont: { color: "#fff", size: 10 },
+					hovertext: hoverText,
+					hovertemplate: "%{hovertext}<extra></extra>",
 					colorscale: mode === "signed" ? "RdBu" : "YlOrRd",
 					reversescale: mode === "signed",
 					zmid: mode === "signed" ? 0 : undefined,
@@ -96,8 +124,8 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 			layout={{
 				autosize: true,
 				margin: { l: 90, r: 20, t: 20, b: 60 },
-				xaxis: { title: { text: "Strike" }, type: "category" },
-				yaxis: { title: { text: "Expiration" }, type: "category" },
+				xaxis: { title: { text: "Expiration" }, type: "category" },
+				yaxis: { title: { text: "Strike" }, type: "category" },
 			}}
 			style={{ width: "100%", height: "100%" }}
 			useResizeHandler
