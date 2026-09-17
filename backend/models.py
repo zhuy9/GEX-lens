@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -23,7 +23,7 @@ def ny_local_date(at: datetime) -> date:
 
 def model_expiry_at_utc(expiration: date) -> datetime:
     """16:00 America/New_York on the expiration date, per PRD 6.1's pricing convention."""
-    return datetime.combine(expiration, time(16, 0), tzinfo=NY_TZ).astimezone(timezone.utc)
+    return datetime.combine(expiration, time(16, 0), tzinfo=NY_TZ).astimezone(UTC)
 
 
 def calendar_dte(expiration: date, valuation_at: datetime) -> int:

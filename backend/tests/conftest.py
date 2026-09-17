@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from models import ChainRequest, ChainSnapshot, OptionQuote, Settings
@@ -35,7 +35,7 @@ def make_snapshot(provider_id: str, symbol: str = "SPY") -> ChainSnapshot:
         flags=(),
     )
     put = call.model_copy(update={"option_type": "P"})
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
     return ChainSnapshot(
         provider_id=provider_id,
         symbol=symbol,

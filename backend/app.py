@@ -4,7 +4,7 @@ import json
 import math
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -87,7 +87,7 @@ class RefreshCoordinator:
 
     def _advance_deadline(self, seconds: int) -> None:
         self._next_allowed_monotonic = time.monotonic() + seconds
-        self._next_allowed_utc = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        self._next_allowed_utc = datetime.now(UTC) + timedelta(seconds=seconds)
 
     def end(self) -> None:
         self._lock.release()
@@ -229,7 +229,7 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
             max_strike_pct=MAX_STRIKE_PCT,
             refresh_min_interval_seconds=settings.refresh_min_interval_seconds,
             refresh_in_progress=gate.in_progress,
-            server_time=datetime.now(timezone.utc),
+            server_time=datetime.now(UTC),
             refresh_not_before=gate.not_before,
         )
         return response.model_dump(mode="json")

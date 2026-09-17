@@ -1,5 +1,5 @@
 import math
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -15,7 +15,7 @@ from analytics import (
 )
 from models import OptionQuote, ny_local_date, year_fraction
 
-VALUATION_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
+VALUATION_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def make_quote(**overrides) -> OptionQuote:

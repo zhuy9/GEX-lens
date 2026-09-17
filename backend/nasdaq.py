@@ -7,7 +7,7 @@ updating that document first.
 
 import math
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -82,7 +82,7 @@ class NasdaqProvider:
         if asset_class is None:
             raise ProviderError("UNSUPPORTED_SYMBOL", f"No Nasdaq asset-class mapping for {symbol!r}")
 
-        collection_started_at = datetime.now(timezone.utc)
+        collection_started_at = datetime.now(UTC)
         today = ny_local_date(collection_started_at)
         params_base = {
             "assetclass": asset_class,
@@ -170,7 +170,7 @@ class NasdaqProvider:
         if price_changed:
             warnings.append("UNDERLYING_PRICE_CHANGED_DURING_COLLECTION")
 
-        collected_at = datetime.now(timezone.utc)
+        collected_at = datetime.now(UTC)
         if (collected_at - collection_started_at).total_seconds() > COLLECTION_WINDOW_SECONDS:
             raise ProviderError("COLLECTION_WINDOW_EXCEEDED", "Collection took too long")
 

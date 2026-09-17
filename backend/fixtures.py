@@ -3,7 +3,7 @@
 import json
 import math
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from models import ChainRequest, ChainSnapshot, OptionQuote, ny_local_date, year_fraction
@@ -11,7 +11,7 @@ from provider import ProviderError
 
 # Fixed synthetic "now" so fixture expirations never age out of the 1-60 DTE
 # window, regardless of when the app actually runs (PRD 5.1).
-FIXED_VALUATION_AT = datetime(2026, 1, 2, 21, 0, tzinfo=timezone.utc)
+FIXED_VALUATION_AT = datetime(2026, 1, 2, 21, 0, tzinfo=UTC)
 
 # spot price, flat-vol assumption, and dividend yield used only to synthesize
 # plausible bid/ask around a BSM mid. Not read from settings.json.

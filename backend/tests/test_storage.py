@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -37,7 +37,7 @@ def _scalar(conn: duckdb.DuckDBPyConnection, sql: str, params: list | None = Non
 
 def save_one(db_path: str, *, source_mode="fixture", symbol="SPY", strike="100"):
     snapshot_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     storage.save_snapshot(
         db_path,
         source_mode=source_mode,
@@ -108,7 +108,7 @@ def test_failed_transaction_leaves_no_partial_snapshot(tmp_path):
     save_one(db_path)
 
     snapshot_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     bad_quote = make_priced_quote().model_copy(
         update={"quote": make_priced_quote().quote.model_copy(update={"symbol": None})}
     )
