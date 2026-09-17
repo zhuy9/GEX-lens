@@ -212,16 +212,47 @@ per request and `money=all` (or `money` omitted), but not with `money=at`.
 `money=all` (or omit `money`) and raise `limit` substantially (test 1000+)
 instead of `money=at`.
 
+### Pagination: `offset` is real and confirmed non-duplicating
+
+Fetched `.../SPY/option-chain?assetclass=etf&limit=60&offset=240&fromdate=2026-09-16&todate=2026-09-30&excode=oprac&callput=callput&money=at&type=all`,
+saved at `docs/samples/spy-option-chain-offset240.json`. Compared against the
+`offset=0` page (`spy-option-chain.json`) by `drillDownURL`, not just strike
+number:
+
+- **Zero overlapping `drillDownURL` values** between the two pages — this is
+  not a repeated/duplicate page.
+- `totalRecord` (1255) and `lastTrade` (spot, unchanged) are identical across
+  pages, as expected for one logical snapshot.
+- The `offset=240` page's rows are all `expiryDate: "Sep 18"`, a **different**
+  expiration than page 1's `"Sep 16"`. Its strike range (708-767) looks
+  similar to page 1's Sep 16 range (680-768) only because "near the money" is
+  relative to the same current spot price, regardless of expiration — not
+  because the data repeats.
+- **This page has no expiration-group header row at all** (`groups: []`),
+  even though it lands mid-way through the Sep 18 group. The header row only
+  appears once, on whichever earlier page first reaches that expiration
+  (somewhere between offset 59 and 240, not yet fetched). **Parser
+  consequence: `nasdaq.py` must carry the "current expiration year" as
+  state across paginated requests**, not re-derive it from each page in
+  isolation — a page can start mid-expiration with no header in sight.
+
+`offset`/`limit` as a real pagination mechanism is now confirmed. What is
+still open:
+
+1. Whether `offset`/`limit` pagination behaves the same way once `money=at`
+   is replaced with `money=all` (the combination this app will actually use,
+   per the strike-scope decision above) — not yet tested.
+2. Whether `totalRecord` represents the count *after* the `money`/`fromdate`/
+   `todate` filters are applied (i.e., a reliable "keep paginating until
+   `offset >= totalRecord`" stop condition) or an unfiltered total — not yet
+   distinguished, since both samples so far used identical filter params.
+3. What a final/short page looks like (fewer than `limit` rows, or an empty
+   `rows` array) — needed to detect "end of chain" without guessing.
+
 ### Next verification needed
 
-A sample per symbol using `money=all` (or no `money` param) with a much
-larger `limit` (try 1000), still scoped by `fromdate`/`todate` to a window
-inside 1-60 DTE, to confirm:
-
-1. The full 0.80x-1.20x strike band appears for at least the first
-   expiration, within one request.
-2. Whether a second in-range expiration (e.g. SPY/QQQ's next weekly, a few
-   days after Sep 16) appears in the same response once `limit` is no longer
-   the bottleneck — this is still needed to confirm `fromdate`/`todate` are
-   real, honored parameters (M0.3), not just an artifact of `limit=60`
-   cutting off after the first expiration.
+One more SPY (or QQQ) sample using `money=all` (or the `money` param
+dropped entirely) with a large `limit` (try 1000), `offset=0`, still scoped
+by `fromdate`/`todate`, to confirm the full 0.80x-1.20x strike band appears
+for the first expiration in a single request under the filter combination
+this app will actually ship with.
