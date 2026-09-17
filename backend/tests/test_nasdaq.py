@@ -174,6 +174,52 @@ def test_repeated_page_without_progress_is_incomplete_chain(monkeypatch):
     assert exc_info.value.code == "INCOMPLETE_CHAIN"
 
 
+def test_changed_underlying_price_on_later_page_adds_warning_and_keeps_first_price(monkeypatch):
+    # M1.11
+    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+    page2 = [_data_row("aapl", "260115", "100.00", "00100000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        offset = int(dict(request.url.params).get("offset", "0"))
+        rows = page1 if offset == 0 else page2
+        last_trade = (
+            "LAST TRADE: $100.00 (AS OF JAN 15, 2026)"
+            if offset == 0
+            else "LAST TRADE: $101.50 (AS OF JAN 15, 2026)"
+        )
+        return httpx.Response(200, json=_body(last_trade, rows))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+
+    assert snapshot.underlying_price == 100.0  # first page's price wins, never overwritten
+    assert "UNDERLYING_PRICE_CHANGED_DURING_COLLECTION" in snapshot.warnings
+
+
+def test_comma_formatted_values_are_parsed():
+    # M1.2
+    rows = [
+        _header_row("January 15, 2026"),
+        _data_row("aapl", "260115", "1,250.00", "01250000", c_last="1,234.56"),
+    ]
+    rows[1]["c_Volume"] = "12,345"
+    rows[1]["c_Openinterest"] = "1,234,567"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $1,200.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+
+    assert snapshot.underlying_price == 1200.0
+    call = next(c for c in snapshot.contracts if c.option_type == "C")
+    assert call.strike == Decimal("1250.00")
+    assert call.last == 1234.56
+    assert call.volume == 12345
+    assert call.open_interest == 1234567
+
+
 def test_unsupported_symbol_rejected_without_http():
     calls = []
 
