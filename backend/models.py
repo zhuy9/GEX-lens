@@ -35,6 +35,15 @@ def year_fraction(expiration: date, valuation_at: datetime) -> float:
     return (model_expiry_at_utc(expiration) - valuation_at).total_seconds() / SECONDS_PER_YEAR
 
 
+def _require_aware(v: datetime | None) -> datetime | None:
+    # A canonical snapshot's datetime fields must be safe to subtract from an
+    # aware expiry timestamp (year_fraction) without a provider adapter
+    # having to remember that rule -- enforced once, here, at construction.
+    if v is not None and v.tzinfo is None:
+        raise ValueError("datetime fields must be timezone-aware")
+    return v
+
+
 class ChainRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -79,6 +88,11 @@ class OptionQuote(BaseModel):
             raise ValueError("count fields must be null or nonnegative")
         return v
 
+    @field_validator("quote_asof")
+    @classmethod
+    def _quote_asof_aware(cls, v: datetime | None) -> datetime | None:
+        return _require_aware(v)
+
 
 class ChainSnapshot(BaseModel):
     """A complete, normalized option-chain collection from one provider call."""
@@ -107,6 +121,11 @@ class ChainSnapshot(BaseModel):
         if not math.isfinite(v) or v <= 0:
             raise ValueError("underlying_price must be finite and positive")
         return v
+
+    @field_validator("collection_started_at", "collected_at", "chain_asof", "spot_asof")
+    @classmethod
+    def _datetimes_aware(cls, v: datetime | None) -> datetime | None:
+        return _require_aware(v)
 
 
 class PricedQuote(BaseModel):
@@ -292,3 +311,8 @@ class DashboardResponse(BaseModel):
     quality: QualityCounts
     gex: GexData
     surface: SurfaceData
+
+    @field_validator("collected_at", "valuation_at", "chain_asof", "spot_asof")
+    @classmethod
+    def _datetimes_aware(cls, v: datetime | None) -> datetime | None:
+        return _require_aware(v)

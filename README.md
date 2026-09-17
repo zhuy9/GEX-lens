@@ -132,9 +132,12 @@ for the full evidence trail):
   deliverables.
 - The underlying price's only timestamp is a calendar date with no
   time-of-day, so chain/spot timestamp alignment can never be confirmed
-  (`TIMESTAMP_ALIGNMENT_UNKNOWN` on every snapshot) and IV/gamma pricing
-  uses an assumed 16:00 America/New_York valuation time
-  (`VALUATION_TIME_ASSUMED`), not an observed one.
+  (`TIMESTAMP_ALIGNMENT_UNKNOWN` on every snapshot). Separately, the
+  chain-level pricing timestamp (`data.table.asOf`) has never been observed
+  populated, so `valuation_at` falls back to collection-start time
+  (`VALUATION_TIME_ASSUMED`). 16:00 America/New_York is a different,
+  unconditional convention: the assumed *expiration* pricing time used for
+  every contract's `T`, not a valuation-time fallback.
 - Full-band (`money=all`, large `limit`) pagination was directly confirmed
   against SPY; QQQ and AAPL are confirmed for field paths and pagination
   mechanics generally, but not re-run symbol-by-symbol under that exact

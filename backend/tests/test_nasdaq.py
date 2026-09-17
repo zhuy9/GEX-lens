@@ -112,6 +112,49 @@ def test_single_page_parses_spot_and_contracts():
     assert "MULTIPLIER_ASSUMED" in snapshot.warnings
 
 
+# R06: data.table.asOf has never been observed populated and its format is
+# unverified (docs/source-contract.md) -- only an unambiguous, timezone-aware
+# value may become chain_asof. Anything else must fall back safely, not
+# crash later when subtracted from an aware expiry timestamp.
+@pytest.mark.parametrize(
+    "as_of",
+    [
+        None,
+        "2026-01-15",  # date-only: fromisoformat parses this as naive midnight
+        "2026-01-15T16:00:00",  # naive full datetime
+        "not a date",
+    ],
+)
+def test_unusable_chain_asof_falls_back_without_crashing(as_of):
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, as_of=as_of)
+        )
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert snapshot.chain_asof is None
+
+
+def test_aware_chain_asof_is_accepted_and_normalized_to_utc():
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+    as_of = "2026-01-15T16:00:00-05:00"  # aware, non-UTC
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, as_of=as_of)
+        )
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert snapshot.chain_asof is not None
+    assert snapshot.chain_asof.tzinfo is not None
+    assert snapshot.chain_asof.utcoffset().total_seconds() == 0
+    assert snapshot.chain_asof.hour == 21  # 16:00-05:00 -> 21:00 UTC
+
+
 def test_spot_price_is_never_confused_with_a_premium():
     # M1.9
     rows = [

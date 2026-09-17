@@ -316,10 +316,11 @@ class NasdaqProvider:
         if len(contracts) > MAX_CONTRACTS:
             raise ProviderError("INCOMPLETE_CHAIN", "Normalized contract cap exceeded")
 
+        # VALUATION_TIME_ASSUMED is provider-independent (any provider whose
+        # chain_asof is null falls back to collection_started_at) and is
+        # added once, at the orchestration boundary in app.py, not here.
         warnings: list[str] = ["MULTIPLIER_ASSUMED"]
         chain_asof = self._parse_chain_asof(chain_asof_raw)
-        if chain_asof is None:
-            warnings.append("VALUATION_TIME_ASSUMED")
         # Spot timestamp from this source is date-only (docs/source-contract.md);
         # it can never be compared at second-level precision.
         warnings.append("TIMESTAMP_ALIGNMENT_UNKNOWN")
@@ -378,12 +379,23 @@ class NasdaqProvider:
         return body
 
     def _parse_chain_asof(self, raw: str | None) -> datetime | None:
+        """PRD 6.1: only accept a value that is unambiguously a
+        timezone-aware pricing timestamp. docs/source-contract.md records
+        that data.table.asOf has never been observed populated and its
+        format is unverified -- a naive or date-only value (e.g.
+        "2026-09-17", which fromisoformat happily parses as a naive
+        midnight) must fall back to the documented VALUATION_TIME_ASSUMED
+        path, not be guessed at and passed downstream to fail when it is
+        later subtracted from an aware expiry timestamp."""
         if not raw:
             return None
         try:
-            return datetime.fromisoformat(raw)
+            parsed = datetime.fromisoformat(raw)
         except ValueError:
             return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(UTC)
 
     def _sanitize_raw_payload(self, params: dict, pages: list[dict]) -> str:
         import json

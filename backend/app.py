@@ -112,6 +112,10 @@ def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol:
 
     chain_asof = snapshot.chain_asof
     valuation_at = chain_asof if chain_asof is not None else snapshot.collection_started_at
+    # Provider-independent: any provider whose chain_asof is null falls back
+    # to collection_started_at here, so the warning belongs at this one
+    # orchestration boundary, not duplicated in every provider adapter.
+    warnings = snapshot.warnings if chain_asof is not None else (*snapshot.warnings, "VALUATION_TIME_ASSUMED")
     q = settings.dividend_yields[symbol]
 
     priced, gex, surface, quality = analyze_snapshot(
@@ -149,7 +153,7 @@ def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol:
             pricing_time_convention=PRICING_TIME_CONVENTION,
             algorithm_version=ALGORITHM_VERSION,
         ),
-        warnings=snapshot.warnings,
+        warnings=warnings,
         quality=quality,
         gex=gex,
         surface=surface,

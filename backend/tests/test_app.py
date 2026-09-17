@@ -142,6 +142,22 @@ def test_dashboard_spot_provenance_and_internal_consistency(tmp_path):
     assert fetched["parameters"] == dashboard["parameters"]
 
 
+def test_missing_chain_asof_adds_valuation_time_assumed_at_the_orchestration_boundary(tmp_path):
+    # R06: any provider whose chain_asof is null gets this warning from
+    # app.py, not from remembering to add it in the adapter itself.
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    snapshot = make_snapshot(provider_id="fixture").model_copy(update={"chain_asof": None})
+    stub = StubProvider(snapshot=snapshot)
+    client = TestClient(create_app(settings, provider=stub))
+
+    dashboard = client.post("/api/dashboard/SPY/refresh").json()
+    assert "VALUATION_TIME_ASSUMED" in dashboard["warnings"]
+    # falls back to collection_started_at, which make_snapshot sets equal to
+    # collected_at -- collection_started_at itself isn't in the public API
+    assert dashboard["valuation_at"] == dashboard["collected_at"]
+    assert dashboard["chain_asof"] is None
+
+
 def test_get_endpoints_never_call_provider(tmp_path):
     # M3.6
     settings = make_settings(str(tmp_path / "t.duckdb"))
