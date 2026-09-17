@@ -3,20 +3,14 @@
 [![CI](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml)
 
 A local, single-user dashboard for options gamma-exposure (GEX) and implied-volatility
-analysis. It fetches one option-chain snapshot per manual refresh, computes IV and
-gamma with Black-Scholes-Merton, and renders two views: a strike-by-expiration GEX
-heatmap and a 3D IV surface.
+analysis. Fetches one option-chain snapshot per manual refresh and renders a
+strike-by-expiration GEX heatmap plus a 3D IV surface, computed with
+Black-Scholes-Merton. Milestones M0-M5 are complete (see
+[docs/m5-validation.md](docs/m5-validation.md) for the live verification run).
 
 This is a personal research tool, not a trading system. See
 [docs/options_analytics_mvp_prd.md](docs/options_analytics_mvp_prd.md) for the full
-product requirements, including scope, numerical methods, and acceptance criteria.
-
-## Status
-
-M0-M5 complete: source contract verified, backend API and React frontend
-built and tested, and a live hand-off validation pass performed against
-real Nasdaq data for all three symbols (see
-[docs/m5-validation.md](docs/m5-validation.md) for the recorded run).
+product requirements.
 
 ## Stack
 
@@ -26,15 +20,12 @@ real Nasdaq data for all three symbols (see
 
 ## Setup
 
-Requires Python 3.12 and Node.js 22.12+ (PRD section 4; also what
-[the CI workflow](.github/workflows/ci.yml) installs and validates on every
-push). No Docker and no external database server — DuckDB is an embedded
-file under `backend/data/`.
+Requires Python 3.12 and Node.js 22.12+. No Docker, no external database server —
+DuckDB is an embedded file under `backend/data/`.
 
-Commands below are Windows PowerShell, copy-paste ready. macOS/Linux
-equivalents are the same commands with `python3.12` for `py -3.12`,
-`.venv/bin/activate` for `.venv\Scripts\Activate.ps1`, and `cp` for
-`Copy-Item`.
+Commands below are Windows PowerShell; macOS/Linux equivalents swap
+`py -3.12`/`python3.12`, `.venv\Scripts\Activate.ps1`/`.venv/bin/activate`, and
+`Copy-Item`/`cp`.
 
 ### Backend
 
@@ -43,14 +34,13 @@ cd backend
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-Copy-Item settings.example.json settings.json   # edit as needed; never commit this file
+Copy-Item settings.example.json settings.json   # never commit this file
 python app.py
 ```
 
-The API serves on `http://127.0.0.1:8000`. `settings.json`'s `source_mode`
-defaults to `"fixture"`, which needs no external network access. Switching
-it to `"nasdaq"` requires completing your own review of Nasdaq's terms (see
-[Data Sources and Usage Rights](#data-sources-and-usage-rights) below).
+Serves on `http://127.0.0.1:8000`. Defaults to `source_mode: "fixture"` (synthetic
+data, no network). Switching to `"nasdaq"` requires your own review of
+[Nasdaq's terms](https://www.nasdaq.com/legal) — see below.
 
 ### Frontend
 
@@ -60,8 +50,7 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. The dev server proxies `/api` requests to the
-backend on port 8000, so start the backend first.
+Open `http://127.0.0.1:5173` (proxies `/api` to the backend — start it first).
 
 ### Checks
 
@@ -78,77 +67,37 @@ npm test
 
 ## Adding a data source
 
-`OptionsDataProvider` ([backend/provider.py](backend/provider.py)) is a
-`Protocol` with one method, `fetch_chain`. `NasdaqProvider` and
-`FixtureProvider` both implement it independently — neither imports the
-other (see the boundary tests in
-[backend/tests/test_provider_boundary.py](backend/tests/test_provider_boundary.py),
-including a `StubProvider` that reaches both charts' saved API output
-without constructing either real provider). Swapping or adding a source
-means writing a new adapter against this Protocol and adding one branch to
-the `source_mode` factory in [backend/app.py](backend/app.py); it requires
-no changes to `analytics.py`, `storage.py`, or the frontend.
+`OptionsDataProvider` ([backend/provider.py](backend/provider.py)) is a `Protocol`
+with one method, `fetch_chain`. Add an adapter and one branch in the `source_mode`
+factory in [backend/app.py](backend/app.py) — no changes to analytics, storage, or
+the frontend required. See
+[backend/tests/test_provider_boundary.py](backend/tests/test_provider_boundary.py)
+for the boundary tests a new provider must satisfy.
 
-Refreshes are manual only — the UI never polls, auto-refreshes on focus, or
-reconnects in the background. Every provider is also bound to the
-chain-only underlying-price rule: the spot price comes solely from the
-option-chain response's own last-trade field, never a separate quote
-endpoint, a contract premium, or a selected strike.
+Refreshes are manual only, and every provider must source the underlying price only
+from the option-chain response itself — never a separate quote endpoint.
 
 ## License
 
-Original project code is licensed under the [MIT License](LICENSE).
-Third-party components retain their respective licenses and notices.
-
-The software license does not grant rights to third-party market data,
-data services, or trademarks.
+[MIT](LICENSE) for original project code. Third-party components and market data
+retain their own licenses; this license grants no rights to either.
 
 ## Data Sources and Usage Rights
 
-This is an independent project. It is not affiliated with, endorsed by,
-or sponsored by Nasdaq.
+Independent project, not affiliated with or endorsed by Nasdaq. Any Nasdaq
+integration is unofficial, provides no data license, and requires your own review of
+[Nasdaq's terms](https://www.nasdaq.com/legal) before use.
 
-Any Nasdaq integration is unofficial and does not provide a market-data
-license or entitlement. Before enabling it, obtain the permissions
-required for your intended use. Review [Nasdaq's terms](https://www.nasdaq.com/legal)
-and any applicable data-provider agreement.
-
-Development fixtures, automated tests, and demonstration screenshots
-use independently generated synthetic data. Do not submit captured
-market-data responses, populated databases, credentials, or market-data
-exports in commits, pull requests, or public issues.
+Fixtures, tests, and screenshots use synthetic data only. Never commit captured
+market-data responses, databases, credentials, or market-data exports.
 
 ## Research Limitations
 
-This application is a snapshot-based research tool, not a real-time
-exchange feed or an investment recommendation. Implied volatility and
-gamma-exposure outputs depend on model assumptions and input quality; they
-are not guaranteed trading signals.
+A snapshot-based research tool, not a real-time feed or investment recommendation —
+IV/GEX outputs depend on model assumptions and are not trading signals.
 
-Known source and model gaps, recorded during M0/M5 verification against a
-real Nasdaq sample (see [docs/source-contract.md](docs/source-contract.md)
-for the full evidence trail):
-
-- The Nasdaq source has no per-quote timestamp, no open-interest-as-of
-  date, no contract multiplier field, and no adjusted/nonstandard-contract
-  flag. Every snapshot therefore carries `MULTIPLIER_ASSUMED` (100 shares
-  per contract, unverifiable per contract) and cannot detect adjusted
-  deliverables.
-- The underlying price's only timestamp is a calendar date with no
-  time-of-day, so chain/spot timestamp alignment can never be confirmed
-  (`TIMESTAMP_ALIGNMENT_UNKNOWN` on every snapshot). Separately, the
-  chain-level pricing timestamp (`data.table.asOf`) has never been observed
-  populated, so `valuation_at` falls back to collection-start time
-  (`VALUATION_TIME_ASSUMED`). 16:00 America/New_York is a different,
-  unconditional convention: the assumed *expiration* pricing time used for
-  every contract's `T`, not a valuation-time fallback.
-- Full-band (`money=all`, large `limit`) pagination was directly confirmed
-  against SPY; QQQ and AAPL are confirmed for field paths and pagination
-  mechanics generally, but not re-run symbol-by-symbol under that exact
-  parameter combination — an extrapolation, not a direct observation, for
-  those two.
-- This uses Nasdaq's website-backed endpoint under the owner's own
-  personal-use risk judgment, not the documented, authenticated Options
-  Chain API — it carries no SLA and can change or break without notice.
-  Fixture mode is synthetic data for development and is never a substitute
-  for this live verification.
+The Nasdaq source has known gaps (no per-quote timestamps, no contract-multiplier
+field, date-only spot pricing, and an unofficial, no-SLA endpoint), recorded in full
+in [docs/source-contract.md](docs/source-contract.md) along with the M0/M5
+verification evidence. Fixture mode is synthetic and never a substitute for that
+live verification.
