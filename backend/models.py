@@ -26,6 +26,16 @@ def model_expiry_at_utc(expiration: date) -> datetime:
     return datetime.combine(expiration, time(16, 0), tzinfo=NY_TZ).astimezone(UTC)
 
 
+def dividend_ex_at(ex_date: date) -> datetime:
+    """09:30 America/New_York on ex_date, per ADR-0001 Section 7.4's model timing convention."""
+    return datetime.combine(ex_date, time(9, 30), tzinfo=NY_TZ).astimezone(UTC)
+
+
+def dividend_pay_at(payment_date: date) -> datetime:
+    """16:00 America/New_York on payment_date, per ADR-0001 Section 7.4."""
+    return datetime.combine(payment_date, time(16, 0), tzinfo=NY_TZ).astimezone(UTC)
+
+
 def calendar_dte(expiration: date, valuation_at: datetime) -> int:
     return (expiration - ny_local_date(valuation_at)).days
 
@@ -108,6 +118,10 @@ class ChainSnapshot(BaseModel):
     collected_at: datetime
     chain_asof: datetime | None
     spot_asof: datetime | None
+    # Section 7.5: a date-only underlying as-of, populated only when the
+    # chain adapter can verify it independently of a precise spot_asof.
+    # Never synthesized from spot_asof; old snapshots simply lack it.
+    spot_asof_date: date | None = None
     oi_asof: date | None
     contracts: tuple[OptionQuote, ...]
     warnings: tuple[str, ...] = ()
@@ -368,6 +382,33 @@ class MarketInputs(BaseModel):
     reference_bundle_hash: str
 
     @field_validator("resolved_at")
+    @classmethod
+    def _aware(cls, v: datetime) -> datetime:
+        _require_aware(v)
+        return v
+
+
+class ExpiryPricingContext(BaseModel):
+    """One per in-scope expiration (Section 9.2): IV, gamma, model bounds,
+    forward, and surface-side selection all consume this same context."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expiration: date
+    valuation_at: datetime
+    expiry_at: datetime
+    T: float
+    actual_spot: float
+    model_spot: float
+    r_cc: float
+    q_continuous: float
+    pv_dividends: float
+    forward: float
+    used_event_ids: tuple[str, ...]
+    warnings: tuple[str, ...]
+    status: Literal["OK", "INVALID_DIVIDEND_ADJUSTED_SPOT"]
+
+    @field_validator("valuation_at", "expiry_at")
     @classmethod
     def _aware(cls, v: datetime) -> datetime:
         _require_aware(v)

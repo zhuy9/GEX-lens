@@ -9,16 +9,23 @@ from scipy.optimize import brentq
 from scipy.stats import norm
 
 from models import (
+    SECONDS_PER_YEAR,
+    ExpiryPricingContext,
     GexCell,
     GexData,
     OptionQuote,
     PricedQuote,
     QualityCounts,
+    ResolvedDividend,
     SurfaceData,
     SurfaceObservation,
     calendar_dte,
+    dividend_ex_at,
+    dividend_pay_at,
+    model_expiry_at_utc,
     year_fraction,
 )
+from provider import ProviderError
 
 IV_LOW, IV_HIGH = 1e-4, 5.0
 IV_XTOL, IV_RTOL, IV_MAXITER = 1e-8, 1e-8, 100
@@ -81,29 +88,38 @@ def solve_iv(
     return sigma, None
 
 
-def price_quote(
+def _price_and_scope_gate(
     quote: OptionQuote,
     *,
-    spot: float,
+    pricing_spot: float,
+    actual_spot: float,
     r: float,
     q: float,
-    valuation_at: datetime,
+    t: float,
+    dte: int,
     min_calendar_dte: int,
     max_calendar_dte: int,
     min_strike_pct: float,
     max_strike_pct: float,
+    invalid_model_reason: str | None = None,
 ) -> PricedQuote:
-    """Apply PRD 6.2's eligibility checks in order; retain the first exclusion reason."""
-    dte = calendar_dte(quote.expiration, valuation_at)
-    t = year_fraction(quote.expiration, valuation_at)
+    """Shared quote-quality gate and BSM pricing (PRD 6.2 / ADR-0001 9.3),
+    parameterized by which spot the pricing model actually uses versus the
+    actual spot used for scope filtering -- Section 9.2 requires these two
+    to never be conflated, even though the legacy path uses the same value
+    for both. invalid_model_reason lets a caller with an unusable pricing
+    context (e.g. INVALID_DIVIDEND_ADJUSTED_SPOT) still get the scope check
+    for free, without a second copy of it."""
     strike = float(quote.strike)
     in_scope = (
         min_calendar_dte <= dte <= max_calendar_dte
-        and min_strike_pct * spot <= strike <= max_strike_pct * spot
+        and min_strike_pct * actual_spot <= strike <= max_strike_pct * actual_spot
         and t > 0
     )
     if not in_scope:
         return PricedQuote(quote=quote, mid=None, iv=None, gamma=None, exclusion_reason="OUT_OF_SCOPE")
+    if invalid_model_reason is not None:
+        return PricedQuote(quote=quote, mid=None, iv=None, gamma=None, exclusion_reason=invalid_model_reason)
 
     # R12: _exposure_for below always multiplies by the fixed 100 in PRD 7's
     # formula -- it does not read quote.multiplier. A canonical record with
@@ -133,19 +149,189 @@ def price_quote(
     if (ask - bid) / mid > MAX_RELATIVE_SPREAD:
         return PricedQuote(quote=quote, mid=mid, iv=None, gamma=None, exclusion_reason="WIDE_SPREAD")
 
-    lower, upper = _price_bounds(quote.option_type, spot, strike, t, r, q)
+    lower, upper = _price_bounds(quote.option_type, pricing_spot, strike, t, r, q)
     if not (lower - MODEL_BOUNDS_TOLERANCE <= mid <= upper + MODEL_BOUNDS_TOLERANCE):
         return PricedQuote(quote=quote, mid=mid, iv=None, gamma=None, exclusion_reason="MODEL_PRICE_BOUNDS")
 
     if mid - lower <= MIN_TIME_VALUE:
         return PricedQuote(quote=quote, mid=mid, iv=None, gamma=None, exclusion_reason="LOW_TIME_VALUE")
 
-    iv, error = solve_iv(quote.option_type, spot, strike, t, r, q, mid)
+    iv, error = solve_iv(quote.option_type, pricing_spot, strike, t, r, q, mid)
     if iv is None:
         return PricedQuote(quote=quote, mid=mid, iv=None, gamma=None, exclusion_reason=error)
 
-    gamma = bsm_gamma(spot, strike, t, r, q, iv)
+    gamma = bsm_gamma(pricing_spot, strike, t, r, q, iv)
     return PricedQuote(quote=quote, mid=mid, iv=iv, gamma=gamma, exclusion_reason=None)
+
+
+def price_quote(
+    quote: OptionQuote,
+    *,
+    spot: float,
+    r: float,
+    q: float,
+    valuation_at: datetime,
+    min_calendar_dte: int,
+    max_calendar_dte: int,
+    min_strike_pct: float,
+    max_strike_pct: float,
+) -> PricedQuote:
+    """Legacy continuous-yield BSM path (PRD 6.2), retained only for
+    reproducing/comparing pre-ADR-0001 snapshots (ADR-0001 Section 2
+    decision 6). New snapshots use price_quote_v2."""
+    dte = calendar_dte(quote.expiration, valuation_at)
+    t = year_fraction(quote.expiration, valuation_at)
+    return _price_and_scope_gate(
+        quote,
+        pricing_spot=spot,
+        actual_spot=spot,
+        r=r,
+        q=q,
+        t=t,
+        dte=dte,
+        min_calendar_dte=min_calendar_dte,
+        max_calendar_dte=max_calendar_dte,
+        min_strike_pct=min_strike_pct,
+        max_strike_pct=max_strike_pct,
+    )
+
+
+def check_price_time_alignment(
+    *,
+    chain_asof: datetime | None,
+    spot_asof: datetime | None,
+    spot_asof_date: date | None,
+    valuation_at: datetime,
+    ex_at: datetime,
+) -> str | None:
+    """ADR-0001 Section 7.5: whether the chain's observed spot can safely
+    be paired with one dividend event's ex_at for cash-PV adjustment.
+
+    Returns "DIVIDEND_ALIGNMENT_UNVERIFIED" when source precision cannot
+    determine which side of the event the spot was observed on, or None
+    when it is unambiguously on one side. Raises ProviderError on a known
+    cross-ex mismatch -- never silently fixed by guessing a timestamp,
+    fetching a separate spot, or subtracting the dividend twice.
+    """
+    if chain_asof is not None and spot_asof is not None:
+        if (chain_asof < ex_at) != (spot_asof < ex_at):
+            raise ProviderError(
+                "DIVIDEND_PRICE_TIME_MISMATCH",
+                "Chain and spot timestamps disagree about which side of the ex-event they fall on",
+            )
+        return None
+
+    if spot_asof_date is not None:
+        if spot_asof_date < ex_at.date():
+            if valuation_at > ex_at:
+                raise ProviderError(
+                    "DIVIDEND_PRICE_TIME_MISMATCH",
+                    "A cum-dividend date-only spot cannot be paired with a post-ex-date valuation",
+                )
+            return None  # spot and valuation are both consistent with being pre-ex
+        if spot_asof_date > ex_at.date():
+            return None  # spot was observed after the ex-date: unambiguously ex-dividend
+
+    return "DIVIDEND_ALIGNMENT_UNVERIFIED"
+
+
+def build_expiry_pricing_context(
+    expiration: date,
+    valuation_at: datetime,
+    actual_spot: float,
+    r_cc: float,
+    dividend_events: tuple[ResolvedDividend, ...],
+    *,
+    chain_asof: datetime | None = None,
+    spot_asof: datetime | None = None,
+    spot_asof_date: date | None = None,
+) -> ExpiryPricingContext:
+    """ADR-0001 Section 9.1: one cash-PV pricing context per in-scope
+    expiration. An event is eligible only when valuation_at < ex_at <=
+    expiry_at (Section 7.4); its cash amount is discounted to its payment
+    instant when known, else to ex_at with a warning."""
+    expiry_at = model_expiry_at_utc(expiration)
+    t = year_fraction(expiration, valuation_at)
+
+    warnings: list[str] = []
+    used_event_ids: list[str] = []
+    pv = 0.0
+    for event in dividend_events:
+        ex_at = dividend_ex_at(event.ex_date)
+        if not (valuation_at < ex_at <= expiry_at):
+            continue
+
+        alignment_warning = check_price_time_alignment(
+            chain_asof=chain_asof,
+            spot_asof=spot_asof,
+            spot_asof_date=spot_asof_date,
+            valuation_at=valuation_at,
+            ex_at=ex_at,
+        )
+        if alignment_warning is not None and alignment_warning not in warnings:
+            warnings.append(alignment_warning)
+
+        payment_date = event.payment_date
+        if payment_date is not None:
+            discount_at = dividend_pay_at(payment_date)
+        else:
+            discount_at = ex_at
+            if "DIVIDEND_PAYMENT_TIME_ASSUMED_AT_EX" not in warnings:
+                warnings.append("DIVIDEND_PAYMENT_TIME_ASSUMED_AT_EX")
+
+        tau = (discount_at - valuation_at).total_seconds() / SECONDS_PER_YEAR
+        pv += float(event.amount) * math.exp(-r_cc * tau)
+        used_event_ids.append(event.event_id)
+
+    model_spot = actual_spot - pv
+    status = "OK" if model_spot > 0 else "INVALID_DIVIDEND_ADJUSTED_SPOT"
+    forward = model_spot * math.exp(r_cc * t)
+
+    return ExpiryPricingContext(
+        expiration=expiration,
+        valuation_at=valuation_at,
+        expiry_at=expiry_at,
+        T=t,
+        actual_spot=actual_spot,
+        model_spot=model_spot,
+        r_cc=r_cc,
+        q_continuous=0.0,
+        pv_dividends=pv,
+        forward=forward,
+        used_event_ids=tuple(used_event_ids),
+        warnings=tuple(warnings),
+        status=status,
+    )
+
+
+def price_quote_v2(
+    quote: OptionQuote,
+    *,
+    context: ExpiryPricingContext,
+    min_calendar_dte: int,
+    max_calendar_dte: int,
+    min_strike_pct: float,
+    max_strike_pct: float,
+) -> PricedQuote:
+    """ADR-0001 Section 9's cash-PV BSM approximation. Strike-scope
+    filtering uses the actual spot (Section 9.2); pricing uses the shared
+    per-expiry context's model spot and resolved continuous rate, q=0."""
+    dte = calendar_dte(quote.expiration, context.valuation_at)
+    invalid_model_reason = "INVALID_DIVIDEND_ADJUSTED_SPOT" if context.status != "OK" else None
+    return _price_and_scope_gate(
+        quote,
+        pricing_spot=context.model_spot,
+        actual_spot=context.actual_spot,
+        r=context.r_cc,
+        q=context.q_continuous,
+        t=context.T,
+        dte=dte,
+        min_calendar_dte=min_calendar_dte,
+        max_calendar_dte=max_calendar_dte,
+        min_strike_pct=min_strike_pct,
+        max_strike_pct=max_strike_pct,
+        invalid_model_reason=invalid_model_reason,
+    )
 
 
 def _exposure_for(pq: PricedQuote | None, spot: float) -> float | None:
@@ -252,9 +438,13 @@ class _Slice(NamedTuple):
     points: list[tuple[float, float, Decimal]]
 
 
-def build_surface(
-    priced_quotes: tuple[PricedQuote, ...], spot: float, r: float, q: float, valuation_at: datetime
+def _build_surface_from_forwards(
+    priced_quotes: tuple[PricedQuote, ...], time_and_forward: dict[date, tuple[float, float]]
 ) -> SurfaceData:
+    """Shared surface-interpolation core (ADR-0001 9.4): the (T, forward)
+    per expiry is the only thing that differs between the legacy
+    continuous-yield path and the cash-PV path -- both must not recompute
+    a forward independently here."""
     valid = [pq for pq in priced_quotes if pq.iv is not None]
     by_expiration: dict[date, list[PricedQuote]] = {}
     for pq in valid:
@@ -262,8 +452,9 @@ def build_surface(
 
     slices: dict[date, _Slice] = {}
     for expiration, pqs in by_expiration.items():
-        t = year_fraction(expiration, valuation_at)
-        f = spot * math.exp((r - q) * t)
+        if expiration not in time_and_forward:
+            continue
+        t, f = time_and_forward[expiration]
         by_strike: dict[Decimal, dict[str, PricedQuote]] = {}
         for pq in pqs:
             by_strike.setdefault(pq.quote.strike, {})[pq.quote.option_type] = pq
@@ -324,6 +515,31 @@ def build_surface(
     )
 
 
+def build_surface(
+    priced_quotes: tuple[PricedQuote, ...], spot: float, r: float, q: float, valuation_at: datetime
+) -> SurfaceData:
+    """Legacy continuous-yield surface (retained for old-snapshot reproduction)."""
+    expirations = {pq.quote.expiration for pq in priced_quotes if pq.iv is not None}
+    time_and_forward = {}
+    for expiration in expirations:
+        t = year_fraction(expiration, valuation_at)
+        time_and_forward[expiration] = (t, spot * math.exp((r - q) * t))
+    return _build_surface_from_forwards(priced_quotes, time_and_forward)
+
+
+def build_surface_v2(
+    priced_quotes: tuple[PricedQuote, ...], contexts: dict[date, ExpiryPricingContext]
+) -> SurfaceData:
+    """ADR-0001 Section 9.4: use each expiry's own context forward, never
+    recomputed independently here."""
+    time_and_forward = {
+        expiration: (context.T, context.forward)
+        for expiration, context in contexts.items()
+        if context.status == "OK"
+    }
+    return _build_surface_from_forwards(priced_quotes, time_and_forward)
+
+
 def build_quality_counts(
     priced_quotes: tuple[PricedQuote, ...], gex_cells_flat: list[GexCell | None], source_row_count: int
 ) -> QualityCounts:
@@ -374,6 +590,38 @@ def analyze_snapshot(
     )
     gex = build_gex(priced, spot)
     surface = build_surface(priced, spot, r, q, valuation_at)
+    flat_cells = [cell for row in gex.cells for cell in row]
+    quality = build_quality_counts(priced, flat_cells, source_row_count)
+    return priced, gex, surface, quality
+
+
+def analyze_snapshot_v2(
+    contracts: tuple[OptionQuote, ...],
+    *,
+    actual_spot: float,
+    contexts: dict[date, ExpiryPricingContext],
+    min_calendar_dte: int,
+    max_calendar_dte: int,
+    min_strike_pct: float,
+    max_strike_pct: float,
+    source_row_count: int,
+) -> tuple[tuple[PricedQuote, ...], GexData, SurfaceData, QualityCounts]:
+    """ADR-0001 Section 9: cash-PV BSM path. One context per expiry
+    (M3.2) -- callers build `contexts` with build_expiry_pricing_context,
+    one entry per expiration actually present in `contracts`."""
+    priced = tuple(
+        price_quote_v2(
+            c,
+            context=contexts[c.expiration],
+            min_calendar_dte=min_calendar_dte,
+            max_calendar_dte=max_calendar_dte,
+            min_strike_pct=min_strike_pct,
+            max_strike_pct=max_strike_pct,
+        )
+        for c in contracts
+    )
+    gex = build_gex(priced, actual_spot)
+    surface = build_surface_v2(priced, contexts)
     flat_cells = [cell for row in gex.cells for cell in row]
     quality = build_quality_counts(priced, flat_cells, source_row_count)
     return priced, gex, surface, quality
