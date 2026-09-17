@@ -93,6 +93,8 @@ def test_quote_eligibility_exclusion_reasons(overrides, expected_reason):
         valuation_at=VALUATION_AT,
         min_calendar_dte=1,
         max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
     )
     assert priced.exclusion_reason == expected_reason
     assert priced.iv is None
@@ -108,7 +110,15 @@ def test_low_time_value_is_excluded_when_within_bounds_but_near_intrinsic():
     mid = lower + 0.005
     quote = quote.model_copy(update={"bid": mid, "ask": mid})
     priced = price_quote(
-        quote, spot=100.0, r=0.04, q=0.0, valuation_at=VALUATION_AT, min_calendar_dte=1, max_calendar_dte=60
+        quote,
+        spot=100.0,
+        r=0.04,
+        q=0.0,
+        valuation_at=VALUATION_AT,
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
     )
     assert priced.exclusion_reason == "LOW_TIME_VALUE"
 
@@ -116,7 +126,15 @@ def test_low_time_value_is_excluded_when_within_bounds_but_near_intrinsic():
 def test_missing_oi_does_not_block_iv_but_blocks_gex():
     quote = make_quote(open_interest=None)
     priced = price_quote(
-        quote, spot=100.0, r=0.04, q=0.0, valuation_at=VALUATION_AT, min_calendar_dte=1, max_calendar_dte=60
+        quote,
+        spot=100.0,
+        r=0.04,
+        q=0.0,
+        valuation_at=VALUATION_AT,
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
     )
     assert priced.exclusion_reason is None
     assert priced.iv is not None
@@ -126,7 +144,15 @@ def test_zero_oi_yields_zero_exposure_even_without_iv():
     # PRD 7: explicit OI=0 -> zero exposure even if IV cannot be calculated
     quote = make_quote(open_interest=0, bid=0.01, ask=0.02)  # LOW_MID -> no gamma
     priced = price_quote(
-        quote, spot=100.0, r=0.04, q=0.0, valuation_at=VALUATION_AT, min_calendar_dte=1, max_calendar_dte=60
+        quote,
+        spot=100.0,
+        r=0.04,
+        q=0.0,
+        valuation_at=VALUATION_AT,
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
     )
     assert priced.gamma is None
     gex = build_gex((priced,), spot=100.0)
@@ -151,6 +177,8 @@ def test_gex_exposure_formula_matches_reference_values():
             valuation_at=VALUATION_AT,
             min_calendar_dte=1,
             max_calendar_dte=60,
+            min_strike_pct=0.80,
+            max_strike_pct=1.20,
         )
         priced.append(pq.model_copy(update={"gamma": 0.02}))
     gex = build_gex(tuple(priced), spot=100.0)
@@ -161,6 +189,29 @@ def test_gex_exposure_formula_matches_reference_values():
     assert cell.signed_proxy == pytest.approx(80_000.0)
     assert cell.gross_exposure == pytest.approx(320_000.0)
     assert cell.status == "COMPLETE"
+
+
+def test_nonstandard_multiplier_is_excluded_not_silently_priced_as_100():
+    # R12: _exposure_for's formula always multiplies by the fixed 100 from
+    # PRD 7 -- it never reads quote.multiplier. A multiplier=50 contract
+    # must therefore be excluded before pricing, not accepted and priced as
+    # if it were a standard 100-share contract (which would silently
+    # overstate its exposure by 2x).
+    quote = make_quote(multiplier=50)
+    priced = price_quote(
+        quote,
+        spot=100.0,
+        r=0.04,
+        q=0.0,
+        valuation_at=VALUATION_AT,
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
+    )
+    assert priced.exclusion_reason == "NONSTANDARD_CONTRACT"
+    assert priced.iv is None
+    assert priced.gamma is None
 
 
 def test_negative_open_interest_is_rejected_at_construction():
@@ -178,7 +229,15 @@ def test_missing_side_yields_null_gex_cell():
     # M2.5
     call = make_quote(option_type="C", open_interest=1000)
     priced_call = price_quote(
-        call, spot=100.0, r=0.04, q=0.0, valuation_at=VALUATION_AT, min_calendar_dte=1, max_calendar_dte=60
+        call,
+        spot=100.0,
+        r=0.04,
+        q=0.0,
+        valuation_at=VALUATION_AT,
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
     )
     priced_call = priced_call.model_copy(update={"gamma": 0.02})
     gex = build_gex((priced_call,), spot=100.0)
@@ -219,7 +278,15 @@ def test_constant_iv_surface_recovers_input_iv():
             )
     priced = tuple(
         price_quote(
-            q_, spot=spot, r=r, q=q, valuation_at=VALUATION_AT, min_calendar_dte=1, max_calendar_dte=60
+            q_,
+            spot=spot,
+            r=r,
+            q=q,
+            valuation_at=VALUATION_AT,
+            min_calendar_dte=1,
+            max_calendar_dte=60,
+            min_strike_pct=0.80,
+            max_strike_pct=1.20,
         )
         for q_ in quotes
     )
@@ -246,6 +313,8 @@ def test_analyze_snapshot_is_deterministic():
         valuation_at=VALUATION_AT,
         min_calendar_dte=1,
         max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
         source_row_count=1,
     )
     first = analyze_snapshot(quotes, **kwargs)

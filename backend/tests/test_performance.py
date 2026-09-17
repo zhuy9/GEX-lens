@@ -63,6 +63,8 @@ def test_processing_and_persistence_p95_under_5_seconds(tmp_path, capsys):
             valuation_at=VALUATION_AT,
             min_calendar_dte=1,
             max_calendar_dte=60,
+            min_strike_pct=0.80,
+            max_strike_pct=1.20,
             source_row_count=1000,
         )
         storage.save_snapshot(

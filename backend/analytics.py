@@ -3,6 +3,7 @@
 import math
 from datetime import date, datetime
 from decimal import Decimal
+from typing import NamedTuple
 
 from scipy.optimize import brentq
 from scipy.stats import norm
@@ -26,8 +27,10 @@ MIN_MID = 0.05
 MAX_RELATIVE_SPREAD = 0.50
 MODEL_BOUNDS_TOLERANCE = 1e-8
 MIN_TIME_VALUE = 0.01
-MIN_STRIKE_PCT = 0.80
-MAX_STRIKE_PCT = 1.20
+# Strike scope is not defined here: app.py owns the one MIN/MAX_STRIKE_PCT
+# constant (it also reports the value as policy in ConfigResponse/
+# Parameters) and passes it into price_quote/analyze_snapshot below, so the
+# reported scope and the executed scope can never drift apart (R12).
 SURFACE_GRID: tuple[float, ...] = tuple(round(-0.20 + 0.01 * j, 2) for j in range(41))
 MAX_BRIDGE_GAP = 0.05
 MIN_SLICE_STRIKES = 3
@@ -87,6 +90,8 @@ def price_quote(
     valuation_at: datetime,
     min_calendar_dte: int,
     max_calendar_dte: int,
+    min_strike_pct: float,
+    max_strike_pct: float,
 ) -> PricedQuote:
     """Apply PRD 6.2's eligibility checks in order; retain the first exclusion reason."""
     dte = calendar_dte(quote.expiration, valuation_at)
@@ -94,13 +99,18 @@ def price_quote(
     strike = float(quote.strike)
     in_scope = (
         min_calendar_dte <= dte <= max_calendar_dte
-        and MIN_STRIKE_PCT * spot <= strike <= MAX_STRIKE_PCT * spot
+        and min_strike_pct * spot <= strike <= max_strike_pct * spot
         and t > 0
     )
     if not in_scope:
         return PricedQuote(quote=quote, mid=None, iv=None, gamma=None, exclusion_reason="OUT_OF_SCOPE")
 
-    if "NONSTANDARD_CONTRACT" in quote.flags:
+    # R12: _exposure_for below always multiplies by the fixed 100 in PRD 7's
+    # formula -- it does not read quote.multiplier. A canonical record with
+    # any other multiplier must not reach that formula silently; exclude by
+    # the actual value, not only by whether a provider remembered to also
+    # set the flag (the two could otherwise drift apart).
+    if quote.multiplier != 100 or "NONSTANDARD_CONTRACT" in quote.flags:
         return PricedQuote(
             quote=quote, mid=None, iv=None, gamma=None, exclusion_reason="NONSTANDARD_CONTRACT"
         )
@@ -138,10 +148,10 @@ def price_quote(
     return PricedQuote(quote=quote, mid=mid, iv=iv, gamma=gamma, exclusion_reason=None)
 
 
-def _exposure_for(side_data: dict | None, spot: float) -> float | None:
-    if side_data is None:
+def _exposure_for(pq: PricedQuote | None, spot: float) -> float | None:
+    if pq is None:
         return None
-    oi, gamma = side_data["oi"], side_data["gamma"]
+    oi, gamma = pq.quote.open_interest, pq.gamma
     if oi == 0:
         return 0.0
     if oi is not None and gamma is not None:
@@ -154,12 +164,12 @@ def build_gex(priced_quotes: tuple[PricedQuote, ...], spot: float) -> GexData:
     strikes = sorted({pq.quote.strike for pq in in_scope})
     expirations = sorted({pq.quote.expiration for pq in in_scope})
 
-    grid: dict[tuple[date, Decimal], dict[str, dict | None]] = {}
+    # Group the already-typed PricedQuote by side instead of extracting its
+    # oi/gamma into a loose dict and rebuilding a typed GexCell from that.
+    grid: dict[tuple[date, Decimal], dict[str, PricedQuote]] = {}
     for pq in in_scope:
         key = (pq.quote.expiration, pq.quote.strike)
-        side = "call" if pq.quote.option_type == "C" else "put"
-        cell = grid.setdefault(key, {"call": None, "put": None})
-        cell[side] = {"oi": pq.quote.open_interest, "gamma": pq.gamma}
+        grid.setdefault(key, {})[pq.quote.option_type] = pq
 
     cells: list[list[GexCell | None]] = []
     for expiration in expirations:
@@ -169,9 +179,9 @@ def build_gex(priced_quotes: tuple[PricedQuote, ...], spot: float) -> GexData:
             if sides is None:
                 row.append(None)
                 continue
-            call_data, put_data = sides["call"], sides["put"]
-            call_exposure = _exposure_for(call_data, spot)
-            put_exposure = _exposure_for(put_data, spot)
+            call_pq, put_pq = sides.get("C"), sides.get("P")
+            call_exposure = _exposure_for(call_pq, spot)
+            put_exposure = _exposure_for(put_pq, spot)
             if call_exposure is not None and put_exposure is not None:
                 signed_proxy: float | None = call_exposure - put_exposure
                 gross_exposure: float | None = call_exposure + put_exposure
@@ -182,10 +192,10 @@ def build_gex(priced_quotes: tuple[PricedQuote, ...], spot: float) -> GexData:
                 status = "INCOMPLETE"
             row.append(
                 GexCell(
-                    call_oi=call_data["oi"] if call_data else None,
-                    put_oi=put_data["oi"] if put_data else None,
-                    call_gamma=call_data["gamma"] if call_data else None,
-                    put_gamma=put_data["gamma"] if put_data else None,
+                    call_oi=call_pq.quote.open_interest if call_pq else None,
+                    put_oi=put_pq.quote.open_interest if put_pq else None,
+                    call_gamma=call_pq.gamma if call_pq else None,
+                    put_gamma=put_pq.gamma if put_pq else None,
                     call_exposure=call_exposure,
                     put_exposure=put_exposure,
                     signed_proxy=signed_proxy,
@@ -235,6 +245,13 @@ _EMPTY_SURFACE = SurfaceData(
 )
 
 
+class _Slice(NamedTuple):
+    """One expiration's usable (k, w, strike) points plus its fractional T."""
+
+    t: float
+    points: list[tuple[float, float, Decimal]]
+
+
 def build_surface(
     priced_quotes: tuple[PricedQuote, ...], spot: float, r: float, q: float, valuation_at: datetime
 ) -> SurfaceData:
@@ -243,7 +260,7 @@ def build_surface(
     for pq in valid:
         by_expiration.setdefault(pq.quote.expiration, []).append(pq)
 
-    slices: dict[date, dict] = {}
+    slices: dict[date, _Slice] = {}
     for expiration, pqs in by_expiration.items():
         t = year_fraction(expiration, valuation_at)
         f = spot * math.exp((r - q) * t)
@@ -264,7 +281,7 @@ def build_surface(
         if len({s for _, _, s in points}) < MIN_SLICE_STRIKES:
             continue
         points.sort(key=lambda item: item[0])
-        slices[expiration] = {"t": t, "points": points}
+        slices[expiration] = _Slice(t=t, points=points)
 
     usable_expirations = sorted(slices.keys())
     if len(usable_expirations) < 2:
@@ -272,8 +289,8 @@ def build_surface(
 
     grid_iv: list[list[float | None]] = []
     for expiration in usable_expirations:
-        points = slices[expiration]["points"]
-        t = slices[expiration]["t"]
+        points = slices[expiration].points
+        t = slices[expiration].t
         xs = [p[0] for p in points]
         ws = [p[1] for p in points]
         row = []
@@ -290,18 +307,18 @@ def build_surface(
             expiration=expiration,
             strike=strike,
             k=k,
-            dte=slices[expiration]["t"] * 365,
-            iv=math.sqrt(w / slices[expiration]["t"]),
+            dte=slices[expiration].t * 365,
+            iv=math.sqrt(w / slices[expiration].t),
         )
         for expiration in usable_expirations
-        for k, w, strike in slices[expiration]["points"]
+        for k, w, strike in slices[expiration].points
     )
 
     return SurfaceData(
         status="READY",
         k=SURFACE_GRID,
         expirations=tuple(usable_expirations),
-        dte=tuple(slices[e]["t"] * 365 for e in usable_expirations),
+        dte=tuple(slices[e].t * 365 for e in usable_expirations),
         iv=tuple(tuple(row) for row in grid_iv),
         observations=observations,
     )
@@ -337,6 +354,8 @@ def analyze_snapshot(
     valuation_at: datetime,
     min_calendar_dte: int,
     max_calendar_dte: int,
+    min_strike_pct: float,
+    max_strike_pct: float,
     source_row_count: int,
 ) -> tuple[tuple[PricedQuote, ...], GexData, SurfaceData, QualityCounts]:
     priced = tuple(
@@ -348,6 +367,8 @@ def analyze_snapshot(
             valuation_at=valuation_at,
             min_calendar_dte=min_calendar_dte,
             max_calendar_dte=max_calendar_dte,
+            min_strike_pct=min_strike_pct,
+            max_strike_pct=max_strike_pct,
         )
         for c in contracts
     )

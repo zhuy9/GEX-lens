@@ -141,6 +141,8 @@ def _collect_and_save(settings: Settings, provider: OptionsDataProvider, symbol:
         valuation_at=valuation_at,
         min_calendar_dte=MIN_CALENDAR_DTE,
         max_calendar_dte=MAX_CALENDAR_DTE,
+        min_strike_pct=MIN_STRIKE_PCT,
+        max_strike_pct=MAX_STRIKE_PCT,
         source_row_count=snapshot.source_row_count,
     )
 

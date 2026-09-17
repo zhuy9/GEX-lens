@@ -56,6 +56,8 @@ def test_identical_inputs_under_different_provider_ids_yield_identical_analytics
         valuation_at=snap_a.collected_at,
         min_calendar_dte=1,
         max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
         source_row_count=1,
     )
     _, gex_a, surface_a, quality_a = analyze_snapshot(snap_a.contracts, **kwargs)
