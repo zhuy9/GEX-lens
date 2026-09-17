@@ -11,8 +11,10 @@ product requirements, including scope, numerical methods, and acceptance criteri
 
 ## Status
 
-M0-M4 complete: source contract verified, backend API, and React frontend are
-in place and tested. M5 (live hand-off validation) is the remaining milestone.
+M0-M5 complete: source contract verified, backend API and React frontend
+built and tested, and a live hand-off validation pass performed against
+real Nasdaq data for all three symbols (see
+[docs/m5-validation.md](docs/m5-validation.md) for the recorded run).
 
 ## Stack
 
@@ -22,16 +24,22 @@ in place and tested. M5 (live hand-off validation) is the remaining milestone.
 
 ## Setup
 
-Requires Python 3.12 and Node.js 18+.
+Requires Python 3.12 and Node.js 18+. No Docker and no external database
+server — DuckDB is an embedded file under `backend/data/`.
+
+Commands below are Windows PowerShell, copy-paste ready. macOS/Linux
+equivalents are the same commands with `python3.12` for `py -3.12`,
+`.venv/bin/activate` for `.venv\Scripts\Activate.ps1`, and `cp` for
+`Copy-Item`.
 
 ### Backend
 
-```bash
+```powershell
 cd backend
-python3.12 -m venv .venv      # Windows with the `py` launcher: `py -3.12 -m venv .venv`
-.venv/Scripts/activate        # Windows; use `source .venv/bin/activate` on macOS/Linux
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp settings.example.json settings.json   # edit as needed; never commit this file
+Copy-Item settings.example.json settings.json   # edit as needed; never commit this file
 python app.py
 ```
 
@@ -42,7 +50,7 @@ it to `"nasdaq"` requires completing your own review of Nasdaq's terms (see
 
 ### Frontend
 
-```bash
+```powershell
 cd frontend
 npm install
 npm run dev
@@ -53,10 +61,35 @@ backend on port 8000, so start the backend first.
 
 ### Checks
 
-```bash
-cd backend && pytest && ruff check . && ty check .
-cd frontend && npm run lint && npm run build && npm test
+```powershell
+cd backend
+pytest
+ruff check .
+ty check .
+cd ..\frontend
+npm run lint
+npm run build
+npm test
 ```
+
+## Adding a data source
+
+`OptionsDataProvider` ([backend/provider.py](backend/provider.py)) is a
+`Protocol` with one method, `fetch_chain`. `NasdaqProvider` and
+`FixtureProvider` both implement it independently — neither imports the
+other (see the boundary tests in
+[backend/tests/test_provider_boundary.py](backend/tests/test_provider_boundary.py),
+including a `StubProvider` that reaches both charts' saved API output
+without constructing either real provider). Swapping or adding a source
+means writing a new adapter against this Protocol and adding one branch to
+the `source_mode` factory in [backend/app.py](backend/app.py); it requires
+no changes to `analytics.py`, `storage.py`, or the frontend.
+
+Refreshes are manual only — the UI never polls, auto-refreshes on focus, or
+reconnects in the background. Every provider is also bound to the
+chain-only underlying-price rule: the spot price comes solely from the
+option-chain response's own last-trade field, never a separate quote
+endpoint, a contract premium, or a selected strike.
 
 ## License
 
@@ -84,10 +117,31 @@ exports in commits, pull requests, or public issues.
 ## Research Limitations
 
 This application is a snapshot-based research tool, not a real-time
-exchange feed or an investment recommendation.
+exchange feed or an investment recommendation. Implied volatility and
+gamma-exposure outputs depend on model assumptions and input quality; they
+are not guaranteed trading signals.
 
-Source data may be delayed, incomplete, or unavailable. Collection time
-does not necessarily represent the time of the underlying market quote.
+Known source and model gaps, recorded during M0/M5 verification against a
+real Nasdaq sample (see [docs/source-contract.md](docs/source-contract.md)
+for the full evidence trail):
 
-Implied volatility and gamma-exposure outputs depend on model assumptions
-and input quality. They should not be treated as guaranteed trading signals.
+- The Nasdaq source has no per-quote timestamp, no open-interest-as-of
+  date, no contract multiplier field, and no adjusted/nonstandard-contract
+  flag. Every snapshot therefore carries `MULTIPLIER_ASSUMED` (100 shares
+  per contract, unverifiable per contract) and cannot detect adjusted
+  deliverables.
+- The underlying price's only timestamp is a calendar date with no
+  time-of-day, so chain/spot timestamp alignment can never be confirmed
+  (`TIMESTAMP_ALIGNMENT_UNKNOWN` on every snapshot) and IV/gamma pricing
+  uses an assumed 16:00 America/New_York valuation time
+  (`VALUATION_TIME_ASSUMED`), not an observed one.
+- Full-band (`money=all`, large `limit`) pagination was directly confirmed
+  against SPY; QQQ and AAPL are confirmed for field paths and pagination
+  mechanics generally, but not re-run symbol-by-symbol under that exact
+  parameter combination — an extrapolation, not a direct observation, for
+  those two.
+- This uses Nasdaq's website-backed endpoint under the owner's own
+  personal-use risk judgment, not the documented, authenticated Options
+  Chain API — it carries no SLA and can change or break without notice.
+  Fixture mode is synthetic data for development and is never a substitute
+  for this live verification.
