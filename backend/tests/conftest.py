@@ -4,9 +4,9 @@ from decimal import Decimal
 from models import ChainRequest, ChainSnapshot, OptionQuote, Settings
 
 
-def make_settings(db_path: str) -> Settings:
+def make_settings(db_path: str, source_mode: str = "fixture") -> Settings:
     return Settings(
-        source_mode="fixture",
+        source_mode=source_mode,
         db_path=db_path,
         symbols=("SPY", "QQQ", "AAPL"),
         default_symbol="SPY",

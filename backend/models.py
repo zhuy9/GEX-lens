@@ -143,7 +143,11 @@ class PricedQuote(BaseModel):
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_mode: Literal["fixture", "nasdaq"]
+    # A plain string, not a closed enum: build_provider() still only knows
+    # how to construct "fixture" or "nasdaq" for production, but a test may
+    # inject any OptionsDataProvider under any configured identity and
+    # exercise the real API/DB path under it. See PRD 4.3's provider Protocol.
+    source_mode: str
     db_path: str
     symbols: tuple[str, ...]
     default_symbol: str
@@ -208,7 +212,7 @@ class ConfigResponse(BaseModel):
 
     symbols: tuple[str, ...]
     default_symbol: str
-    source_mode: Literal["fixture", "nasdaq"]
+    source_mode: str
     risk_free_rate: float
     dividend_yields: dict[str, float]
     min_calendar_dte: int
@@ -297,7 +301,7 @@ class DashboardResponse(BaseModel):
     schema_version: Literal[1] = 1
     snapshot_id: UUID
     symbol: str
-    source_mode: Literal["fixture", "nasdaq"]
+    source_mode: str
     collected_at: datetime
     valuation_at: datetime
     chain_asof: datetime | None

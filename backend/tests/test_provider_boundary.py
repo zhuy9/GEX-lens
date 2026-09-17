@@ -66,6 +66,37 @@ def test_identical_inputs_under_different_provider_ids_yield_identical_analytics
     assert quality_a == quality_b
 
 
+# R07: the test above proves analytics are provider-agnostic, but it calls
+# analyze_snapshot directly and never proves a distinct provider identity
+# survives the real API/DB path -- Settings.source_mode used to be a closed
+# Literal["fixture", "nasdaq"], so no test could even construct settings for
+# a third identity. This one exercises the actual routes end to end.
+
+
+def test_distinct_provider_identity_reaches_the_saved_api_output(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "nasdaq", None)  # fail loudly on any Nasdaq import/construction
+
+    settings = make_settings(str(tmp_path / "t.duckdb"), source_mode="review-stub")
+    stub = StubProvider(snapshot=make_snapshot(provider_id="review-stub"))
+    client = TestClient(create_app(settings, provider=stub))
+
+    posted = client.post("/api/dashboard/SPY/refresh")
+    assert posted.status_code == 200
+    posted_body = posted.json()
+    assert posted_body["source_mode"] == "review-stub"
+    assert posted_body["gex"]["cells"]
+    assert posted_body["surface"]["status"] in ("READY", "INSUFFICIENT_DATA")
+
+    fetched = client.get("/api/dashboard/SPY").json()
+    assert fetched["snapshot_id"] == posted_body["snapshot_id"]
+    assert fetched["source_mode"] == "review-stub"
+    assert fetched["gex"] == posted_body["gex"]
+    assert fetched["surface"] == posted_body["surface"]
+
+    config = client.get("/api/config").json()
+    assert config["source_mode"] == "review-stub"
+
+
 # --- #3: static import-graph checks via the ast module. --------------------
 
 

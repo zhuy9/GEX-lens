@@ -2,7 +2,11 @@
 // confirmed against real /api responses, not guessed: strike values are
 // Decimal-serialized as strings (precision), k/dte/iv are plain numbers.
 
-export type SourceMode = "fixture" | "nasdaq";
+// An opaque provider identity, not a closed enum: the backend's Settings/
+// ConfigResponse/DashboardResponse.source_mode is a plain string so a test
+// provider can carry its own configured identity end-to-end. "fixture" is
+// the one value the UI special-cases (the synthetic-data banner).
+export type SourceMode = string;
 
 export interface ConfigResponse {
 	symbols: string[];
