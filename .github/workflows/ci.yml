@@ -21,7 +21,16 @@ jobs:
           python-version: "3.12" # PRD section 4
       - name: Install dependencies
         working-directory: backend
-        run: pip install -r requirements.txt
+        # A real venv, not a global pip install: ty only auto-discovers
+        # installed packages' types via an activated VIRTUAL_ENV or a .venv
+        # folder in the working directory -- without one, every third-party
+        # import (scipy, fastapi, pydantic, ...) fails to resolve. Adding
+        # the venv's bin dir to GITHUB_PATH makes plain `pip`/`ruff`/`ty`/
+        # `pytest` in later steps resolve to it automatically.
+        run: |
+          python -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/pip install -r requirements.txt
       - name: Lint (ruff)
         working-directory: backend
         run: ruff check .
