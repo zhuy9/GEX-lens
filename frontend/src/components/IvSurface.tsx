@@ -67,7 +67,11 @@ export function IvSurface({ surface }: IvSurfaceProps) {
 			}}
 			style={{ width: "100%", height: "100%" }}
 			useResizeHandler
-			config={{ displaylogo: false, responsive: true }}
+			config={{
+				displaylogo: false,
+				responsive: true,
+				modeBarButtonsToRemove: ["sendDataToCloud"],
+			}}
 		/>
 	);
 }

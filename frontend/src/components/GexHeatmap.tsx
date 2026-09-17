@@ -12,6 +12,9 @@ const THOUSAND = 1_000;
 const PLOT_HEIGHT_PX = 560; // fixed: keeps the x-axis pinned at a constant position
 const ROW_HEIGHT_PX = 20; // minimum per-strike height for readable y-axis labels
 const CHART_CHROME_PX = 130; // x-axis labels + margins
+// Nearest 7 expirations, not the full 1-60 DTE fetch/eligibility scope (which
+// stays fixed per the PRD) -- just how many columns this chart renders.
+const MAX_VISIBLE_EXPIRATIONS = 7;
 
 function fmtMillions(value: number | null): string {
 	if (value === null) return "Unknown";
@@ -65,21 +68,26 @@ function cellHoverText(
 }
 
 export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
+	const expirations = useMemo(
+		() => gex.expirations.slice(0, MAX_VISIBLE_EXPIRATIONS),
+		[gex.expirations],
+	);
+
 	const { z, text, hoverText, zmin, zmax } = useMemo(() => {
 		// Transposed relative to gex.cells (which is [expiration][strike]) so
 		// strike lands on the y-axis and expiration on the x-axis.
 		const z = gex.strikes.map((_, strikeIndex) =>
-			gex.expirations.map((_, expIndex) =>
+			expirations.map((_, expIndex) =>
 				cellValue(gex.cells[expIndex][strikeIndex], mode),
 			),
 		);
 		const text = gex.strikes.map((_, strikeIndex) =>
-			gex.expirations.map((_, expIndex) =>
+			expirations.map((_, expIndex) =>
 				fmtCompact(cellRaw(gex.cells[expIndex][strikeIndex], mode)),
 			),
 		);
 		const hoverText = gex.strikes.map((strike, strikeIndex) =>
-			gex.expirations.map((expiration, expIndex) =>
+			expirations.map((expiration, expIndex) =>
 				cellHoverText(gex.cells[expIndex][strikeIndex], strike, expiration),
 			),
 		);
@@ -91,7 +99,7 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 		}
 		const bound = maxAbs > 0 ? maxAbs : 1;
 		return { z, text, hoverText, zmin: 0, zmax: bound };
-	}, [gex, mode]);
+	}, [gex, mode, expirations]);
 
 	if (gex.strikes.length === 0 || gex.expirations.length === 0) {
 		return (
@@ -117,7 +125,7 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 				data={[
 					{
 						type: "heatmap",
-						x: gex.expirations,
+						x: expirations,
 						y: gex.strikes,
 						z,
 						text,
@@ -148,7 +156,11 @@ export function GexHeatmap({ gex, mode }: GexHeatmapProps) {
 				}}
 				style={{ width: "100%", height: "100%" }}
 				useResizeHandler
-				config={{ displaylogo: false, responsive: true }}
+				config={{
+					displaylogo: false,
+					responsive: true,
+					modeBarButtonsToRemove: ["sendDataToCloud"],
+				}}
 			/>
 		</div>
 	);
