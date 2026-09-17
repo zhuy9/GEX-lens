@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { ChartErrorBoundary } from "@/components/ChartErrorBoundary";
 import { GexHeatmap } from "@/components/GexHeatmap";
-import { IvSurface } from "@/components/IvSurface";
 import { SnapshotMeta } from "@/components/SnapshotMeta";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +19,14 @@ import { useDashboard } from "@/hooks/useDashboard";
 import { useTick } from "@/hooks/useTick";
 import { secondsUntil } from "@/lib/time";
 import type { GexMode } from "@/types";
+
+// Only this panel needs Plotly; the GEX heatmap is a plain HTML table. The
+// production build is a single ~5MB (~1.5MB gzipped) bundle dominated by
+// Plotly, so code-splitting it lets the rest of the page render without
+// waiting for it.
+const IvSurface = lazy(() =>
+	import("@/components/IvSurface").then((m) => ({ default: m.IvSurface })),
+);
 
 export default function App() {
 	const {
@@ -232,7 +239,9 @@ export default function App() {
 						</CardHeader>
 						<CardContent className="h-96">
 							<ChartErrorBoundary>
-								<IvSurface surface={dashboard.surface} />
+								<Suspense fallback={<Skeleton className="h-full w-full" />}>
+									<IvSurface surface={dashboard.surface} />
+								</Suspense>
 							</ChartErrorBoundary>
 						</CardContent>
 					</Card>

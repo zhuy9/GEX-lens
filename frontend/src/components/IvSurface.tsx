@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import type { Config, Data, Layout } from "plotly.js";
+import { memo, useMemo } from "react";
 import Plot from "react-plotly.js";
 import type { SurfaceData } from "@/types";
 
@@ -6,7 +7,25 @@ interface IvSurfaceProps {
 	surface: SurfaceData;
 }
 
-export function IvSurface({ surface }: IvSurfaceProps) {
+// Neither depends on props, so hoisted for a stable reference across every
+// render -- Plotly (and React.memo on the parent) treat a new object
+// identity as "this changed," which resets state like camera position.
+const LAYOUT: Partial<Layout> = {
+	autosize: true,
+	margin: { l: 0, r: 0, t: 20, b: 0 },
+	scene: {
+		xaxis: { title: { text: "log-forward-moneyness (k)" } },
+		yaxis: { title: { text: "DTE (fractional days)" } },
+		zaxis: { title: { text: "IV (%)" } },
+	},
+};
+const CONFIG: Partial<Config> = {
+	displaylogo: false,
+	responsive: true,
+	modeBarButtonsToRemove: ["sendChartToCloud"],
+};
+
+export const IvSurface = memo(function IvSurface({ surface }: IvSurfaceProps) {
 	const observedTrace = useMemo(() => {
 		const x = surface.observations.map((o) => o.k);
 		const y = surface.observations.map((o) => o.dte);
@@ -18,6 +37,39 @@ export function IvSurface({ surface }: IvSurfaceProps) {
 		return { x, y, z, text };
 	}, [surface.observations]);
 
+	const zPercent = useMemo(() => {
+		if (surface.iv === null) return null;
+		return surface.iv.map((row) =>
+			row.map((iv) => (iv === null ? null : iv * 100)),
+		);
+	}, [surface.iv]);
+
+	const data = useMemo((): Data[] => {
+		if (zPercent === null) return [];
+		return [
+			{
+				type: "surface",
+				x: surface.k,
+				y: surface.dte,
+				z: zPercent,
+				connectgaps: false,
+				showscale: false,
+				hoverinfo: "skip",
+				opacity: 0.85,
+			},
+			{
+				type: "scatter3d",
+				mode: "markers",
+				x: observedTrace.x,
+				y: observedTrace.y,
+				z: observedTrace.z,
+				text: observedTrace.text,
+				hovertemplate: "%{text}<extra></extra>",
+				marker: { size: 3, color: "black" },
+			},
+		];
+	}, [surface.k, surface.dte, zPercent, observedTrace]);
+
 	if (surface.status === "INSUFFICIENT_DATA" || surface.iv === null) {
 		return (
 			<div className="flex h-96 items-center justify-center text-center text-sm text-muted-foreground">
@@ -28,50 +80,13 @@ export function IvSurface({ surface }: IvSurfaceProps) {
 		);
 	}
 
-	const zPercent = surface.iv.map((row) =>
-		row.map((iv) => (iv === null ? null : iv * 100)),
-	);
-
 	return (
 		<Plot
-			data={[
-				{
-					type: "surface",
-					x: surface.k,
-					y: surface.dte,
-					z: zPercent,
-					connectgaps: false,
-					showscale: false,
-					hoverinfo: "skip",
-					opacity: 0.85,
-				},
-				{
-					type: "scatter3d",
-					mode: "markers",
-					x: observedTrace.x,
-					y: observedTrace.y,
-					z: observedTrace.z,
-					text: observedTrace.text,
-					hovertemplate: "%{text}<extra></extra>",
-					marker: { size: 3, color: "black" },
-				},
-			]}
-			layout={{
-				autosize: true,
-				margin: { l: 0, r: 0, t: 20, b: 0 },
-				scene: {
-					xaxis: { title: { text: "log-forward-moneyness (k)" } },
-					yaxis: { title: { text: "DTE (fractional days)" } },
-					zaxis: { title: { text: "IV (%)" } },
-				},
-			}}
+			data={data}
+			layout={LAYOUT}
 			style={{ width: "100%", height: "100%" }}
 			useResizeHandler
-			config={{
-				displaylogo: false,
-				responsive: true,
-				modeBarButtonsToRemove: ["sendDataToCloud"],
-			}}
+			config={CONFIG}
 		/>
 	);
-}
+});

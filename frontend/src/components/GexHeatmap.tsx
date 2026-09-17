@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { GexCell, GexData, GexMode } from "@/types";
 
@@ -120,7 +120,12 @@ function cellTextColor(
 	return magnitudeFraction(value, bound) > 0.45 ? "#fff" : "#18181b";
 }
 
-export function GexHeatmap({ gex, mode, spot, valuationAt }: GexHeatmapProps) {
+export const GexHeatmap = memo(function GexHeatmap({
+	gex,
+	mode,
+	spot,
+	valuationAt,
+}: GexHeatmapProps) {
 	const [expanded, setExpanded] = useState(false);
 
 	const bound = useMemo(() => {
@@ -289,4 +294,4 @@ export function GexHeatmap({ gex, mode, spot, valuationAt }: GexHeatmapProps) {
 			</div>
 		</div>
 	);
-}
+});

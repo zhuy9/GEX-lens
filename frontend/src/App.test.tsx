@@ -9,15 +9,23 @@ import {
 	makeDashboard,
 } from "./test-fixtures";
 
+const { plotRenderCount } = vi.hoisted(() => ({ plotRenderCount: vi.fn() }));
 vi.mock("react-plotly.js", () => ({
-	default: (props: { data?: unknown[] }) => (
-		<div data-testid="plotly-mock" data-trace-count={props.data?.length ?? 0} />
-	),
+	default: (props: { data?: unknown[] }) => {
+		plotRenderCount();
+		return (
+			<div
+				data-testid="plotly-mock"
+				data-trace-count={props.data?.length ?? 0}
+			/>
+		);
+	},
 }));
 
 afterEach(() => {
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
+	plotRenderCount.mockClear();
 });
 
 function postCallCount(fetchMock: ReturnType<typeof vi.fn>): number {
@@ -420,6 +428,34 @@ describe("no automatic refresh", () => {
 		expect(screen.getByRole("button", { name: /^refresh$/i })).toBeEnabled();
 
 		expect(fetchMock.mock.calls.length).toBe(callsBefore);
+		vi.useRealTimers();
+	});
+
+	it("R08: the chart subtree does not re-render on every display tick", async () => {
+		vi.useFakeTimers();
+		const dashboard = makeDashboard({
+			surface: {
+				status: "READY",
+				k: [-0.1, 0, 0.1],
+				expirations: ["2026-01-15"],
+				dte: [14],
+				iv: [[0.2, 0.25, 0.3]],
+				observations: [],
+			},
+		});
+		installFetchMock({ config: makeConfig(), dashboards: { SPY: dashboard } });
+
+		render(<App />);
+		await vi.waitFor(() =>
+			expect(screen.getByTestId("plotly-mock")).toBeInTheDocument(),
+		);
+
+		const rendersBeforeTicks = plotRenderCount.mock.calls.length;
+		expect(rendersBeforeTicks).toBeGreaterThan(0);
+
+		await vi.advanceTimersByTimeAsync(60 * 1000); // 60 display ticks, snapshot unchanged
+
+		expect(plotRenderCount.mock.calls.length).toBe(rendersBeforeTicks);
 		vi.useRealTimers();
 	});
 });
