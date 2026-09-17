@@ -8,6 +8,19 @@ CREATE TABLE IF NOT EXISTS snapshots (
     dashboard_json JSON NOT NULL
 );
 
+-- ADR-0001 Section 8.1: one row per (kind, provider_id, subject); latest
+-- successful fetch only. subject is 'USD' for rate batches, the ticker for
+-- dividend feeds.
+CREATE TABLE IF NOT EXISTS reference_cache (
+    kind VARCHAR NOT NULL,
+    provider_id VARCHAR NOT NULL,
+    subject VARCHAR NOT NULL,
+    fetched_at TIMESTAMPTZ NOT NULL,
+    normalized_json JSON NOT NULL,
+    raw_payload_json JSON NOT NULL,
+    PRIMARY KEY (kind, provider_id, subject)
+);
+
 CREATE TABLE IF NOT EXISTS option_quotes (
     snapshot_id UUID NOT NULL,
     symbol VARCHAR NOT NULL,

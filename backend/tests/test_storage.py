@@ -216,3 +216,43 @@ def test_failed_transaction_leaves_no_partial_snapshot(tmp_path):
         conn.close()
     assert count == 0
     assert orphan_quotes == 0
+
+
+# --- ADR-0001 Section 8.1: reference_cache ---------------------------------
+
+
+def test_reference_cache_round_trips_and_reports_none_when_absent(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    assert storage.get_reference_cache(db_path, kind="rate", provider_id="nyfed_sofr", subject="USD") is None
+
+    fetched_at = datetime.now(UTC)
+    storage.upsert_reference_cache(
+        db_path,
+        kind="rate",
+        provider_id="nyfed_sofr",
+        subject="USD",
+        fetched_at=fetched_at,
+        normalized_json={"provider_id": "nyfed_sofr"},
+        raw_payload_json='{"refRates": []}',
+    )
+    cached = storage.get_reference_cache(db_path, kind="rate", provider_id="nyfed_sofr", subject="USD")
+    assert cached is not None
+    assert cached["normalized_json"] == {"provider_id": "nyfed_sofr"}
+    assert cached["raw_payload_json"] == '{"refRates": []}'
+
+
+def test_reference_cache_upsert_replaces_the_prior_entry_for_the_same_key(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    common = dict(db_path=db_path, kind="dividends", provider_id="fixture", subject="SPY")
+    storage.upsert_reference_cache(
+        **common, fetched_at=datetime(2026, 1, 1, tzinfo=UTC),
+        normalized_json={"v": 1}, raw_payload_json="{}",
+    )
+    storage.upsert_reference_cache(
+        **common, fetched_at=datetime(2026, 1, 2, tzinfo=UTC),
+        normalized_json={"v": 2}, raw_payload_json="{}",
+    )
+    cached = storage.get_reference_cache(db_path, kind="dividends", provider_id="fixture", subject="SPY")
+    assert cached["normalized_json"] == {"v": 2}  # only the latest entry survives, per key

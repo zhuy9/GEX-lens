@@ -114,13 +114,14 @@ def _imported_top_level_names(path: Path) -> set[str]:
 
 
 @pytest.mark.parametrize(
-    "module_name", ["provider.py", "models.py", "analytics.py", "storage.py", "fixtures.py"]
+    "module_name",
+    ["provider.py", "models.py", "analytics.py", "storage.py", "fixtures.py", "market_inputs.py", "rates.py"],
 )
 def test_module_does_not_import_nasdaq(module_name):
     assert "nasdaq" not in _imported_top_level_names(BACKEND_DIR / module_name)
 
 
-@pytest.mark.parametrize("module_name", ["analytics.py", "storage.py"])
+@pytest.mark.parametrize("module_name", ["analytics.py", "storage.py", "market_inputs.py"])
 def test_module_does_not_import_http_libraries(module_name):
     names = _imported_top_level_names(BACKEND_DIR / module_name)
     assert "httpx" not in names

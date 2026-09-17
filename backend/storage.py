@@ -154,6 +154,61 @@ def get_latest_dashboard(db_path: str, source_mode: str, symbol: str) -> dict | 
     return None if row is None else json.loads(row[0])
 
 
+def get_reference_cache(
+    db_path: str, *, kind: str, provider_id: str, subject: str
+) -> dict | None:
+    """Latest cached fetch for this (kind, provider_id, subject), or None.
+    The cache is an optimization (Section 8.1): callers decide TTL eligibility
+    themselves from the returned fetched_at."""
+    with _LOCK:
+        conn = duckdb.connect(db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT fetched_at, normalized_json, raw_payload_json FROM reference_cache
+                WHERE kind = ? AND provider_id = ? AND subject = ?
+                """,
+                [kind, provider_id, subject],
+            ).fetchone()
+        finally:
+            conn.close()
+    if row is None:
+        return None
+    fetched_at, normalized_json, raw_payload_json = row
+    return {
+        "fetched_at": fetched_at,
+        "normalized_json": json.loads(normalized_json),
+        "raw_payload_json": raw_payload_json,
+    }
+
+
+def upsert_reference_cache(
+    db_path: str,
+    *,
+    kind: str,
+    provider_id: str,
+    subject: str,
+    fetched_at: datetime,
+    normalized_json: dict,
+    raw_payload_json: str,
+) -> None:
+    """Replace this (kind, provider_id, subject)'s cached entry. Never
+    called on a failed fetch, so a prior successful entry survives one."""
+    with _LOCK:
+        conn = duckdb.connect(db_path)
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO reference_cache
+                    (kind, provider_id, subject, fetched_at, normalized_json, raw_payload_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [kind, provider_id, subject, fetched_at, json.dumps(normalized_json), raw_payload_json],
+            )
+        finally:
+            conn.close()
+
+
 def save_snapshot(
     db_path: str,
     *,

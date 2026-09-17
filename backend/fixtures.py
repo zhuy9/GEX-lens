@@ -6,12 +6,25 @@ import random
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from models import ChainRequest, ChainSnapshot, OptionQuote, ny_local_date, year_fraction
+from models import (
+    ChainRequest,
+    ChainSnapshot,
+    DividendFeedSnapshot,
+    OptionQuote,
+    RateBatch,
+    RateObservation,
+    ScheduleReview,
+    ny_local_date,
+    year_fraction,
+)
 from provider import ProviderError
 
 # Fixed synthetic "now" so fixture expirations never age out of the 1-60 DTE
 # window, regardless of when the app actually runs (PRD 5.1).
 FIXED_VALUATION_AT = datetime(2026, 1, 2, 21, 0, tzinfo=UTC)
+
+# Section 7.3's recommended (not mandatory) operational review horizon.
+FIXTURE_REVIEW_COVERAGE_DAYS = 90
 
 # spot price, flat-vol assumption, and dividend yield used only to synthesize
 # plausible bid/ask around a BSM mid. Not read from settings.json -- q=0.0
@@ -157,4 +170,56 @@ class FixtureProvider:
             source_row_count=len(rows) // 2,
             provider_response_count=1,
             raw_payload_json=raw_payload,
+        )
+
+
+def fixture_schedule_review(symbol: str) -> ScheduleReview:
+    """Synthetic reviewed schedule with no expected events (Section 8.2:
+    fixture inputs use the fixture valuation clock for economic/review-age
+    dates, not the real wall clock)."""
+    today = ny_local_date(FIXED_VALUATION_AT)
+    return ScheduleReview(
+        symbol=symbol,
+        reviewed_at=FIXED_VALUATION_AT,
+        coverage_start=today,
+        coverage_end=today + timedelta(days=FIXTURE_REVIEW_COVERAGE_DAYS),
+        no_other_events_expected=True,
+        source_refs=("fixture",),
+        expected_events=(),
+    )
+
+
+class FixtureRateProvider:
+    """Synthetic RateDataProvider. Makes zero network calls."""
+
+    def fetch_rates(self) -> RateBatch:
+        observation = RateObservation(
+            effective_date=ny_local_date(FIXED_VALUATION_AT),
+            percent_rate=4.0,
+            rate_type="SOFR",
+            revision_indicator=None,
+        )
+        return RateBatch(
+            provider_id="fixture",
+            fetched_at=datetime.now(UTC),
+            source_ref="fixture",
+            observations=(observation,),
+            raw_payload_json=json.dumps(
+                {"provider_id": "fixture", "refRates": [{"type": "SOFR", "percentRate": 4.0}]}
+            ),
+        )
+
+
+class FixtureDividendProvider:
+    """Synthetic DividendDataProvider. Makes zero network calls."""
+
+    def fetch_dividends(self, symbol: str) -> DividendFeedSnapshot:
+        return DividendFeedSnapshot(
+            provider_id="fixture",
+            symbol=symbol,
+            fetched_at=datetime.now(UTC),
+            source_asof=FIXED_VALUATION_AT,
+            records=(),
+            raw_payload_json=json.dumps({"provider_id": "fixture", "symbol": symbol, "records": []}),
+            warnings=(),
         )

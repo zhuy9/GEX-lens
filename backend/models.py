@@ -140,6 +140,240 @@ class PricedQuote(BaseModel):
     exclusion_reason: str | None
 
 
+class RateObservation(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    effective_date: date
+    percent_rate: float
+    rate_type: str
+    revision_indicator: str | None
+
+    @field_validator("percent_rate")
+    @classmethod
+    def _finite(cls, v: float) -> float:
+        if isinstance(v, bool) or not math.isfinite(v):
+            raise ValueError("percent_rate must be a finite number, not a bool")
+        return v
+
+
+class RateBatch(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider_id: str
+    fetched_at: datetime
+    source_ref: str
+    observations: tuple[RateObservation, ...]
+    raw_payload_json: str
+
+    @field_validator("fetched_at")
+    @classmethod
+    def _aware(cls, v: datetime) -> datetime:
+        _require_aware(v)
+        return v
+
+
+class ResolvedRate(BaseModel):
+    """Section 5.1's exact MarketInputs.rate contract."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source_provider_id: str
+    source_ref: str
+    effective_date: date
+    fetched_at: datetime
+    raw_percent_rate: float | None
+    rate_cc: float
+    quote_convention: Literal["percent_simple_act360", "continuous_act365f"]
+    normalization: Literal["constant_daily_sofr_proxy", "manual_already_continuous"]
+    revision_indicator: str | None
+    manual_reason: str | None
+
+    @field_validator("fetched_at")
+    @classmethod
+    def _aware(cls, v: datetime) -> datetime:
+        _require_aware(v)
+        return v
+
+    @field_validator("rate_cc")
+    @classmethod
+    def _rate_cc_bounded(cls, v: float) -> float:
+        # Same application guardrail as Settings.risk_free_rate (PRD/ADR 6.2):
+        # an application input limit, not a statement about possible market rates.
+        if not math.isfinite(v) or not (-0.10 <= v <= 0.50):
+            raise ValueError("rate_cc must be finite and within [-0.10, 0.50]")
+        return v
+
+    @field_validator("raw_percent_rate")
+    @classmethod
+    def _raw_finite(cls, v: float | None) -> float | None:
+        if v is not None and (isinstance(v, bool) or not math.isfinite(v)):
+            raise ValueError("raw_percent_rate must be null or a finite number")
+        return v
+
+
+class ManualRateInput(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rate_cc: float
+    effective_date: date
+    entered_at: datetime
+    source_ref: str
+    reason: str
+
+    @field_validator("entered_at")
+    @classmethod
+    def _aware(cls, v: datetime) -> datetime:
+        _require_aware(v)
+        return v
+
+
+class DividendRecord(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider_record_id: str | None
+    symbol: str
+    currency: str
+    ex_date: date
+    payment_date: date | None
+    declaration_date: date | None
+    amount: Decimal | None
+    kind: Literal["ordinary_cash", "other", "unknown"]
+    source_ref: str
+
+    @field_validator("amount")
+    @classmethod
+    def _amount_positive(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v <= 0:
+            raise ValueError("amount must be null or positive")
+        return v
+
+
+class DividendFeedSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider_id: str
+    symbol: str
+    fetched_at: datetime
+    source_asof: datetime | None
+    records: tuple[DividendRecord, ...]
+    raw_payload_json: str
+    warnings: tuple[str, ...] = ()
+
+    @field_validator("fetched_at", "source_asof")
+    @classmethod
+    def _aware(cls, v: datetime | None) -> datetime | None:
+        return _require_aware(v)
+
+
+class ExpectedDividend(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: str
+    ex_date: date
+    payment_date: date | None
+    amount: Decimal | None
+    amount_status: Literal["declared", "estimated", "pending_source"]
+    source_ref: str
+
+    @field_validator("amount")
+    @classmethod
+    def _amount_positive(cls, v: Decimal | None) -> Decimal | None:
+        if v is not None and v <= 0:
+            raise ValueError("amount must be null or positive")
+        return v
+
+    @model_validator(mode="after")
+    def _pending_has_no_amount(self) -> ExpectedDividend:
+        if self.amount_status == "pending_source" and self.amount is not None:
+            raise ValueError("pending_source events cannot carry an amount")
+        if self.amount_status != "pending_source" and self.amount is None:
+            raise ValueError("declared/estimated events require an amount")
+        return self
+
+
+class ScheduleReview(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    symbol: str
+    reviewed_at: datetime
+    coverage_start: date
+    coverage_end: date
+    no_other_events_expected: Literal[True]
+    source_refs: tuple[str, ...]
+    expected_events: tuple[ExpectedDividend, ...]
+
+    @field_validator("reviewed_at")
+    @classmethod
+    def _aware(cls, v: datetime) -> datetime:
+        _require_aware(v)
+        return v
+
+    @model_validator(mode="after")
+    def _coverage_ordered(self) -> ScheduleReview:
+        if self.coverage_end < self.coverage_start:
+            raise ValueError("coverage_end must not precede coverage_start")
+        return self
+
+
+class ResolvedDividend(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: str
+    ex_date: date
+    payment_date: date | None
+    amount: Decimal
+    amount_status: Literal["source_reported", "owner_declared", "estimated"]
+    source_ref: str
+    source_provider_id: str
+
+    @field_validator("amount")
+    @classmethod
+    def _amount_positive(cls, v: Decimal) -> Decimal:
+        if v <= 0:
+            raise ValueError("amount must be positive")
+        return v
+
+    @model_validator(mode="after")
+    def _payment_not_before_ex(self) -> ResolvedDividend:
+        if self.payment_date is not None and self.payment_date < self.ex_date:
+            raise ValueError("payment_date cannot precede ex_date")
+        return self
+
+
+class ResolvedDividendSchedule(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    events: tuple[ResolvedDividend, ...]
+    review: ScheduleReview
+
+
+class LocalReferenceInputs(BaseModel):
+    """Parsed `reference_inputs.json` (ADR-0001 Section 5.2). Local, git-ignored."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input_schema_version: Literal[1]
+    manual_rate: ManualRateInput | None
+    schedules: dict[str, ScheduleReview]
+
+
+class MarketInputs(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    input_schema_version: Literal[1] = 1
+    resolved_at: datetime
+    rate: ResolvedRate
+    dividend_schedule: ResolvedDividendSchedule
+    warnings: tuple[str, ...]
+    reference_bundle_hash: str
+
+    @field_validator("resolved_at")
+    @classmethod
+    def _aware(cls, v: datetime) -> datetime:
+        _require_aware(v)
+        return v
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
