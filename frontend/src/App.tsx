@@ -72,7 +72,7 @@ export default function App() {
 	return (
 		<div className="mx-auto flex max-w-6xl flex-col gap-4 p-4">
 			<header className="flex flex-wrap items-center justify-between gap-3">
-				<h1 className="text-2xl font-semibold">GEX-lens</h1>
+				<h1 className="text-2xl font-semibold">GEX Lens</h1>
 				<div className="flex flex-wrap items-center gap-2">
 					<span className="text-sm text-muted-foreground" id="symbol-label">
 						Symbol
