@@ -11,8 +11,8 @@ product requirements, including scope, numerical methods, and acceptance criteri
 
 ## Status
 
-Pre-implementation. Milestone M0 (verifying authorized access to a live option-chain
-source) has not started. No application code exists yet.
+M0-M4 complete: source contract verified, backend API, and React frontend are
+in place and tested. M5 (live hand-off validation) is the remaining milestone.
 
 ## Stack
 
@@ -22,8 +22,41 @@ source) has not started. No application code exists yet.
 
 ## Setup
 
-Not available yet. Setup and run instructions will be added once the M1 backend
-scaffold lands (see the PRD's milestone list).
+Requires Python 3.12 and Node.js 18+.
+
+### Backend
+
+```bash
+cd backend
+python -m venv .venv
+.venv/Scripts/activate        # Windows; use `source .venv/bin/activate` on macOS/Linux
+pip install -r requirements.txt
+cp settings.example.json settings.json   # edit as needed; never commit this file
+python app.py
+```
+
+The API serves on `http://127.0.0.1:8000`. `settings.json`'s `source_mode`
+defaults to `"fixture"`, which needs no external network access. Switching
+it to `"nasdaq"` requires completing your own review of Nasdaq's terms (see
+[Data Sources and Usage Rights](#data-sources-and-usage-rights) below).
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`. The dev server proxies `/api` requests to the
+backend on port 8000, so start the backend first.
+
+### Checks
+
+```bash
+cd backend && pytest && ruff check . && ty check .
+cd frontend && npm run lint && npm run build && npm test
+```
 
 ## License
 
