@@ -30,15 +30,38 @@ export function isAbortError(error: unknown): boolean {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
 	const response = await fetch(path, init);
 	if (!response.ok) {
-		const body = (await response.json()) as ApiErrorResponse;
+		// A failed response isn't guaranteed to carry the app's JSON error
+		// envelope -- a proxy's HTML error page or a connection-level failure
+		// can still reach here as a non-ok Response. Fall back to a bounded
+		// generic error instead of throwing an unrelated JSON-parse error.
+		let body: ApiErrorResponse | null = null;
+		try {
+			body = (await response.json()) as ApiErrorResponse;
+		} catch {
+			// not the expected JSON envelope
+		}
+		if (body?.error) {
+			throw new ApiError(
+				response.status,
+				body.error.code,
+				body.error.message,
+				body.error.retry_after_seconds,
+			);
+		}
 		throw new ApiError(
 			response.status,
-			body.error.code,
-			body.error.message,
-			body.error.retry_after_seconds,
+			"HTTP_ERROR",
+			`Request failed (HTTP ${response.status})`,
+			null,
 		);
 	}
 	return (await response.json()) as T;
+}
+
+export function errorMessage(error: unknown): string {
+	if (error instanceof ApiError) return error.message;
+	if (error instanceof Error) return error.message.slice(0, 200);
+	return "Unknown error";
 }
 
 export function getConfig(signal?: AbortSignal): Promise<ConfigResponse> {

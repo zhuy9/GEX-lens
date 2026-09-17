@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { getConfig } from "@/api";
+import { errorMessage, getConfig } from "@/api";
 import { clockOffsetMs } from "@/lib/time";
 import type { ConfigResponse } from "@/types";
 
@@ -12,6 +12,8 @@ export interface UseConfigResult {
 	 * call, which freezes any age/cooldown text derived from it.
 	 */
 	serverOffsetMs: number;
+	/** Set when the most recent load attempt failed; cleared on success. */
+	configError: string | null;
 	reload: () => Promise<void>;
 }
 
@@ -22,17 +24,22 @@ export interface UseConfigResult {
 export function useConfig(): UseConfigResult {
 	const [config, setConfig] = useState<ConfigResponse | null>(null);
 	const [serverOffsetMs, setServerOffsetMs] = useState(0);
+	const [configError, setConfigError] = useState<string | null>(null);
 
 	const reload = useCallback(async () => {
 		try {
 			const result = await getConfig();
 			setConfig(result);
 			setServerOffsetMs(clockOffsetMs(result.server_time));
-		} catch {
+			setConfigError(null);
+		} catch (error) {
 			// PRD 11.3: "if it fails, retain the existing local cooldown and allow
-			// a later manual attempt" -- leave prior config/offset state untouched.
+			// a later manual attempt" -- leave prior config/offset state
+			// untouched, but surface the failure instead of leaving the caller
+			// stuck on an unexplained loading state with no recovery action.
+			setConfigError(errorMessage(error));
 		}
 	}, []);
 
-	return { config, serverOffsetMs, reload };
+	return { config, serverOffsetMs, configError, reload };
 }

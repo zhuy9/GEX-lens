@@ -47,6 +47,96 @@ describe("initial load", () => {
 	});
 });
 
+describe("load failures (R05)", () => {
+	it("an initial config failure shows a retry alert, and retrying recovers", async () => {
+		let configCallCount = 0;
+		const dashboard = makeDashboard();
+		const fetchMock = vi.fn(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				if (url.endsWith("/api/config")) {
+					configCallCount += 1;
+					if (configCallCount === 1) {
+						return new Response("Internal Server Error", { status: 500 });
+					}
+					return jsonResponse(200, makeConfig());
+				}
+				if (url.endsWith("/api/dashboard/SPY") && init?.method !== "POST") {
+					return jsonResponse(200, dashboard);
+				}
+				throw new Error(`Unhandled: ${url}`);
+			},
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const user = userEvent.setup();
+		render(<App />);
+		expect(
+			await screen.findByText("Failed to load configuration"),
+		).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /retry loading/i }));
+
+		await screen.findByText("Snapshot"); // recovered
+		expect(
+			screen.queryByText("Failed to load configuration"),
+		).not.toBeInTheDocument();
+	});
+
+	it("a saved-dashboard failure shows an error state distinct from empty, and retry sends no POST", async () => {
+		const fetchMock = vi.fn(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				if (url.endsWith("/api/config")) return jsonResponse(200, makeConfig());
+				if (url.endsWith("/api/dashboard/SPY") && init?.method !== "POST") {
+					return new Response("Internal Server Error", { status: 500 });
+				}
+				throw new Error(`Unhandled: ${url}`);
+			},
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<App />);
+		expect(
+			await screen.findByText("Failed to load the saved snapshot"),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText(/no saved snapshot yet/i),
+		).not.toBeInTheDocument();
+
+		const callsBefore = fetchMock.mock.calls.length;
+		const user = userEvent.setup();
+		await user.click(screen.getByRole("button", { name: /retry loading/i }));
+
+		await waitFor(() =>
+			expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBefore),
+		);
+		expect(postCallCount(fetchMock)).toBe(0); // retry is GET-only, never a POST
+	});
+
+	it("a malformed (non-JSON) error body still produces a bounded message, not a crash", async () => {
+		const fetchMock = vi.fn(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const url = String(input);
+				if (url.endsWith("/api/config")) return jsonResponse(200, makeConfig());
+				if (url.endsWith("/api/dashboard/SPY") && init?.method !== "POST") {
+					return new Response("<html>502 Bad Gateway</html>", { status: 502 });
+				}
+				throw new Error(`Unhandled: ${url}`);
+			},
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		render(<App />);
+		expect(
+			await screen.findByText("Failed to load the saved snapshot"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(/request failed \(http 502\)/i),
+		).toBeInTheDocument();
+	});
+});
+
 describe("manual refresh", () => {
 	it("one click sends exactly one POST and replaces the dashboard", async () => {
 		const initial = makeDashboard({ snapshot_id: "snap-1", spot: 100 });

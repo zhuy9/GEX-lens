@@ -22,7 +22,12 @@ import { secondsUntil } from "@/lib/time";
 import type { GexMode } from "@/types";
 
 export default function App() {
-	const { config, serverOffsetMs, reload: reloadConfig } = useConfig();
+	const {
+		config,
+		serverOffsetMs,
+		configError,
+		reload: reloadConfig,
+	} = useConfig();
 	const [symbol, setSymbol] = useState<string | null>(null);
 	const [gexMode, setGexMode] = useState<GexMode>("signed");
 	const tick = useTick();
@@ -35,10 +40,15 @@ export default function App() {
 		[reloadConfig],
 	);
 
-	const { dashboard, status, refreshing, refreshError, refresh } = useDashboard(
-		symbol ?? "",
-		handleRefreshSettled,
-	);
+	const {
+		dashboard,
+		status,
+		loadError,
+		refreshing,
+		refreshError,
+		refresh,
+		retryLoad,
+	} = useDashboard(symbol ?? "", handleRefreshSettled);
 
 	// Open/reload: config resolves the default symbol once, which then
 	// triggers useDashboard's own effect (PRD 11.3's "GET config, then GET
@@ -106,7 +116,29 @@ export default function App() {
 				</div>
 			</header>
 
-			{config === null && <Skeleton className="h-10 w-full" />}
+			{config === null && configError === null && (
+				<Skeleton className="h-10 w-full" />
+			)}
+
+			{configError !== null && (
+				<Alert variant="destructive">
+					<AlertTitle>
+						{config === null
+							? "Failed to load configuration"
+							: "Failed to refresh configuration"}
+					</AlertTitle>
+					<AlertDescription className="flex flex-wrap items-center gap-2">
+						<span>{configError}</span>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => void reloadConfig()}
+						>
+							Retry loading
+						</Button>
+					</AlertDescription>
+				</Alert>
+			)}
 
 			{refreshError && (
 				<Alert variant="destructive">
@@ -128,6 +160,18 @@ export default function App() {
 						No saved snapshot yet for {symbol}. Click Refresh to fetch one.
 					</CardContent>
 				</Card>
+			)}
+
+			{status === "error" && symbol !== null && (
+				<Alert variant="destructive">
+					<AlertTitle>Failed to load the saved snapshot</AlertTitle>
+					<AlertDescription className="flex flex-wrap items-center gap-2">
+						<span>{loadError}</span>
+						<Button variant="outline" size="sm" onClick={retryLoad}>
+							Retry loading
+						</Button>
+					</AlertDescription>
+				</Alert>
 			)}
 
 			{dashboard && (

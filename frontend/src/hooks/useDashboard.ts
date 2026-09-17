@@ -1,15 +1,30 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, getDashboard, isAbortError, postRefresh } from "@/api";
+import {
+	ApiError,
+	errorMessage,
+	getDashboard,
+	isAbortError,
+	postRefresh,
+} from "@/api";
 import type { ApiErrorBody, DashboardResponse } from "@/types";
 
-export type DashboardStatus = "loading" | "empty" | "ready";
+export type DashboardStatus = "loading" | "empty" | "ready" | "error";
 
 export interface UseDashboardResult {
 	dashboard: DashboardResponse | null;
+	/**
+	 * "empty" means the API's NO_SNAPSHOT outcome specifically -- no snapshot
+	 * exists yet. Any other failure (network, 500, malformed body) is
+	 * "error", not "empty": those are not the same fact, and showing "empty"
+	 * for a real failure invites an unnecessary Refresh click.
+	 */
 	status: DashboardStatus;
+	loadError: string | null;
 	refreshing: boolean;
 	refreshError: ApiErrorBody | null;
 	refresh: () => Promise<void>;
+	/** Retries the saved-dashboard GET only; never issues a POST. */
+	retryLoad: () => void;
 }
 
 /**
@@ -31,15 +46,21 @@ export function useDashboard(
 ): UseDashboardResult {
 	const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
 	const [status, setStatus] = useState<DashboardStatus>("loading");
+	const [loadError, setLoadError] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
 	const [refreshError, setRefreshError] = useState<ApiErrorBody | null>(null);
 	const generationRef = useRef(0);
 	const loadAbortRef = useRef<AbortController | null>(null);
+	const [reloadTick, setReloadTick] = useState(0);
 
+	// reloadTick is intentionally unread inside the effect; it exists only to
+	// force a re-run on demand (retryLoad).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
 	useEffect(() => {
 		const generation = ++generationRef.current;
 		setDashboard(null);
 		setStatus("loading");
+		setLoadError(null);
 		setRefreshError(null);
 
 		if (symbol === "") {
@@ -59,11 +80,16 @@ export function useDashboard(
 			.catch((error: unknown) => {
 				if (isAbortError(error)) return;
 				if (generationRef.current !== generation) return;
-				setStatus("empty");
+				setStatus("error");
+				setLoadError(errorMessage(error));
 			});
 
 		return () => controller.abort();
-	}, [symbol]);
+	}, [symbol, reloadTick]);
+
+	const retryLoad = useCallback(() => {
+		setReloadTick((t) => t + 1);
+	}, []);
 
 	const refresh = useCallback(async () => {
 		const generation = ++generationRef.current;
@@ -101,5 +127,13 @@ export function useDashboard(
 		}
 	}, [symbol, onRefreshSettled]);
 
-	return { dashboard, status, refreshing, refreshError, refresh };
+	return {
+		dashboard,
+		status,
+		loadError,
+		refreshing,
+		refreshError,
+		refresh,
+		retryLoad,
+	};
 }
