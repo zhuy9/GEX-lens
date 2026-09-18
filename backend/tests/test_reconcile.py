@@ -39,16 +39,15 @@ STRIKES = (95, 100, 105)
 PRICING_TIME_CONVENTION = "16:00 America/New_York on expiration date"
 
 
-def _make_contracts(r: float, q: float, model_spot_by_expiration=None) -> tuple[OptionQuote, ...]:
+def _make_contracts(r: float, q: float) -> tuple[OptionQuote, ...]:
     """Contracts priced at the real BSM value so they reprice to the exact
     saved IV/gamma when reconcile.py reruns them under the same inputs."""
     contracts = []
     for expiration in EXPIRATIONS:
-        s = (model_spot_by_expiration or {}).get(expiration, SPOT)
         t = (expiration - VALUATION_AT.date()).days / 365.0
         for strike in STRIKES:
             for option_type in ("C", "P"):
-                price = bsm_price(option_type, s, strike, t, r, q, SIGMA)
+                price = bsm_price(option_type, SPOT, strike, t, r, q, SIGMA)
                 spread = max(0.02, price * 0.01)
                 contracts.append(
                     OptionQuote(

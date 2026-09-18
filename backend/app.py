@@ -21,6 +21,7 @@ from pydantic import ValidationError
 import storage
 from analytics import analyze_snapshot_v2, build_expiry_pricing_context
 from market_inputs import (
+    canonical_json,
     load_local_reference_inputs,
     resolve_dividend_schedule,
     resolve_market_inputs,
@@ -170,10 +171,6 @@ def _http_error(
     return HTTPException(status_code=status_code, detail=detail)
 
 
-def _canonical_json(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-
-
 def _date_or_none(value: date | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -234,7 +231,7 @@ def _calculation_input_hash(
         "model_id": MODEL_ID,
         "algorithm_version": ALGORITHM_VERSION,
     }
-    return hashlib.sha256(_canonical_json(payload).encode()).hexdigest()
+    return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 
 
 def _collect_and_save(

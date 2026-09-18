@@ -2,6 +2,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { DashboardResponse, ResolvedDividend } from "@/types";
+import { formatTimestamp } from "./SnapshotMeta";
 
 interface PricingInputsPanelProps {
 	dashboard: DashboardResponse;
@@ -18,10 +19,6 @@ const DIVIDEND_STATUS_LABEL: Record<ResolvedDividend["amount_status"], string> =
 
 function fmtPercent(value: number): string {
 	return `${(value * 100).toFixed(4)}%`;
-}
-
-function fmtTimestamp(iso: string): string {
-	return new Date(iso).toLocaleString();
 }
 
 export function PricingInputsPanel({
@@ -75,7 +72,7 @@ export function PricingInputsPanel({
 					)}
 					<span>Source: {rate.source_provider_id}</span>
 					<span>Effective: {rate.effective_date}</span>
-					<span>Retrieved: {fmtTimestamp(rate.fetched_at)}</span>
+					<span>Retrieved: {formatTimestamp(rate.fetched_at)}</span>
 				</div>
 
 				<div>

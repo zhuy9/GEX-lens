@@ -34,7 +34,7 @@ const WARNING_TEXT: Record<string, string> = {
 		"At least one event's amount is an estimate, not a source-confirmed figure.",
 };
 
-function formatTimestamp(value: string | null): string {
+export function formatTimestamp(value: string | null): string {
 	if (value === null) return "Unknown";
 	return new Date(value).toLocaleString();
 }

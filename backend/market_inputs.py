@@ -408,7 +408,10 @@ def resolve_dividend_schedule(
 # --- combining both into one frozen bundle (Section 5.1, 11.2) -------------
 
 
-def _canonical_json(value: object) -> str:
+def canonical_json(value: object) -> str:
+    """Section 11.2's canonicalization: sorted keys, compact separators,
+    stable string representation. Shared by reference_bundle_hash here and
+    app.py's calculation_input_hash -- both hashes need the same recipe."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
@@ -423,7 +426,7 @@ def resolve_market_inputs(
         "rate": rate.model_dump(mode="json"),
         "dividend_schedule": dividend_schedule.model_dump(mode="json"),
     }
-    reference_bundle_hash = hashlib.sha256(_canonical_json(bundle).encode()).hexdigest()
+    reference_bundle_hash = hashlib.sha256(canonical_json(bundle).encode()).hexdigest()
     return MarketInputs(
         resolved_at=resolved_at,
         rate=rate,
