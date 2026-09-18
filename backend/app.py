@@ -59,7 +59,7 @@ from models import (
 from provider import DividendDataProvider, OptionsDataProvider, ProviderError, RateDataProvider
 
 MIN_CALENDAR_DTE = 1
-MAX_CALENDAR_DTE = 60
+MAX_CALENDAR_DTE = 30
 MIN_STRIKE_PCT = 0.80
 MAX_STRIKE_PCT = 1.20
 PRICING_TIME_CONVENTION = "16:00 America/New_York on expiration date"

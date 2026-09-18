@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import NamedTuple
 
 from scipy.optimize import brentq
-from scipy.stats import norm
+from scipy.special import ndtr
 
 from models import (
     SECONDS_PER_YEAR,
@@ -42,19 +42,24 @@ NEAR_EX_DIVIDEND_DAYS = 7
 SURFACE_GRID: tuple[float, ...] = tuple(round(-0.20 + 0.01 * j, 2) for j in range(41))
 MAX_BRIDGE_GAP = 0.05
 MIN_SLICE_STRIKES = 3
+INV_SQRT_2PI = 0.3989422804014327
 
 
 def bsm_price(option_type: str, s: float, k: float, t: float, r: float, q: float, sigma: float) -> float:
     d1 = (math.log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * math.sqrt(t))
     d2 = d1 - sigma * math.sqrt(t)
     if option_type == "C":
-        return s * math.exp(-q * t) * norm.cdf(d1) - k * math.exp(-r * t) * norm.cdf(d2)
-    return k * math.exp(-r * t) * norm.cdf(-d2) - s * math.exp(-q * t) * norm.cdf(-d1)
+        return s * math.exp(-q * t) * ndtr(d1) - k * math.exp(-r * t) * ndtr(d2)
+    return k * math.exp(-r * t) * ndtr(-d2) - s * math.exp(-q * t) * ndtr(-d1)
 
 
 def bsm_gamma(s: float, k: float, t: float, r: float, q: float, sigma: float) -> float:
     d1 = (math.log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * math.sqrt(t))
-    return math.exp(-q * t) * norm.pdf(d1) / (s * sigma * math.sqrt(t))
+    return math.exp(-q * t) * fast_pdf(d1) / (s * sigma * math.sqrt(t))
+
+
+def fast_pdf(x: float) -> float:
+    return INV_SQRT_2PI * math.exp(-0.5 * x * x)
 
 
 def _price_bounds(option_type: str, s: float, k: float, t: float, r: float, q: float) -> tuple[float, float]:

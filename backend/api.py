@@ -18,7 +18,7 @@ NASDAQ_DIVIDENDS_URL = "https://api.nasdaq.com/api/quote/{symbol}/dividends"
 
 # Chain-specific: a multi-page fetch, so its own (larger) cumulative cap
 # (docs/source-contract.md) -- distinct from a single reference response.
-CHAIN_PAGE_LIMIT = 1000
+CHAIN_PAGE_LIMIT = 2000
 CHAIN_MAX_REQUESTS = 10
 CHAIN_MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 CHAIN_MAX_CONTRACTS = 10_000
