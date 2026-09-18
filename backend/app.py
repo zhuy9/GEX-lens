@@ -19,7 +19,20 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 import storage
-from analytics import analyze_snapshot_v2, build_expiry_pricing_context
+from analytics import (
+    IV_HIGH,
+    IV_LOW,
+    IV_MAXITER,
+    IV_RTOL,
+    IV_XTOL,
+    MAX_RELATIVE_SPREAD,
+    MIN_MID,
+    MIN_TIME_VALUE,
+    MODEL_BOUNDS_TOLERANCE,
+    REPRICE_TOLERANCE,
+    analyze_snapshot_v2,
+    build_expiry_pricing_context,
+)
 from instruments import INSTRUMENTS
 from market_inputs import (
     canonical_json,
@@ -227,6 +240,21 @@ def _calculation_input_hash(
         "dividend_events": dividend_rows,
         "model_id": MODEL_ID,
         "algorithm_version": ALGORITHM_VERSION,
+        # Section 11.2's "scope/quality thresholds": a silent change to any of
+        # these without bumping algorithm_version must be caught by hash
+        # reproduction, not only the scope bounds already listed above.
+        "quality_thresholds": {
+            "min_mid": MIN_MID,
+            "max_relative_spread": MAX_RELATIVE_SPREAD,
+            "model_bounds_tolerance": MODEL_BOUNDS_TOLERANCE,
+            "min_time_value": MIN_TIME_VALUE,
+            "iv_low": IV_LOW,
+            "iv_high": IV_HIGH,
+            "iv_xtol": IV_XTOL,
+            "iv_rtol": IV_RTOL,
+            "iv_maxiter": IV_MAXITER,
+            "reprice_tolerance": REPRICE_TOLERANCE,
+        },
     }
     return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 

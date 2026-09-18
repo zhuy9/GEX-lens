@@ -525,6 +525,25 @@ def test_v2_dashboard_carries_provenance_hashes_and_model_identifiers(tmp_path):
     assert dashboard["gex"]["canonical_unit"] == "usd_delta_notional_per_1pct"
 
 
+def test_calculation_input_hash_changes_if_a_quality_threshold_changes(tmp_path, monkeypatch):
+    # Section 11.2: "The numerical hash includes ... scope/quality
+    # thresholds" -- a silent change to one of analytics.py's quality
+    # constants must be caught by hash reproduction.
+    import app as app_module
+
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    stub = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client = TestClient(create_app(settings, provider=stub))
+    before = client.post("/api/dashboard/SPY/refresh").json()["calculation_input_hash"]
+
+    monkeypatch.setattr(app_module, "MIN_MID", app_module.MIN_MID + 0.01)
+    stub2 = StubProvider(snapshot=make_snapshot(provider_id="fixture"))
+    client2 = TestClient(create_app(make_settings(str(tmp_path / "t2.duckdb")), provider=stub2))
+    after = client2.post("/api/dashboard/SPY/refresh").json()["calculation_input_hash"]
+
+    assert before != after
+
+
 def test_v2_dashboard_never_exposes_a_raw_reference_payload(tmp_path):
     # M4.7
     settings = make_settings(str(tmp_path / "t.duckdb"))
