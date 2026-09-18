@@ -13,19 +13,34 @@ running server holds its own connection to the same DuckDB file).
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import duckdb
 
-from analytics import analyze_snapshot_v2, build_expiry_pricing_context
-from market_inputs import load_local_reference_inputs, resolve_dividend_schedule, resolve_rate
+from analytics import (
+    IV_HIGH,
+    IV_LOW,
+    IV_MAXITER,
+    IV_RTOL,
+    IV_XTOL,
+    MAX_RELATIVE_SPREAD,
+    MIN_MID,
+    MIN_TIME_VALUE,
+    MODEL_BOUNDS_TOLERANCE,
+    REPRICE_TOLERANCE,
+    _exposure_for,
+    analyze_snapshot_v2,
+    build_expiry_pricing_context,
+)
+from market_inputs import canonical_json, load_local_reference_inputs, resolve_dividend_schedule, resolve_rate
 from models import (
     ExpiryPricingContext,
     GexData,
@@ -60,6 +75,108 @@ def _pct_diff(new: float | None, old: float | None) -> tuple[float | None, str |
     if old == 0:
         return None, "old_is_zero"
     return 100 * (new - old) / abs(old), None
+
+
+def _abs_diff(new: float | None, old: float | None) -> float | None:
+    """Section 12: "Always report the dollar difference when both values
+    exist" -- a plain new-old, with no old==0 special case since a raw
+    subtraction is always defined."""
+    if new is None or old is None:
+        return None
+    return new - old
+
+
+def _quote_time_hash(
+    contracts: tuple[OptionQuote, ...],
+    actual_spot: float,
+    valuation_at: datetime,
+    min_dte: int,
+    max_dte: int,
+    min_pct: float,
+    max_pct: float,
+) -> str:
+    """N7 (Section 14): a hash of only the inputs that never vary across
+    this CLI's four scenarios -- quote/OI/spot/time, scope, and quality
+    thresholds -- isolated from rate/dividend inputs so the "unchanged
+    normalized quote/OI/spot/time hash component" invariant can be
+    demonstrated, not merely assumed. Deliberately local to this file
+    rather than imported from app.py: reconcile.py must not depend on the
+    live FastAPI app (Section 12)."""
+    contract_rows = sorted(
+        (
+            {
+                "symbol": c.symbol,
+                "expiration": c.expiration.isoformat(),
+                "strike": str(c.strike),
+                "option_type": c.option_type,
+                "bid": c.bid,
+                "ask": c.ask,
+                "last": c.last,
+                "volume": c.volume,
+                "open_interest": c.open_interest,
+                "multiplier": c.multiplier,
+                "flags": sorted(c.flags),
+            }
+            for c in contracts
+        ),
+        key=lambda row: (row["symbol"], row["expiration"], row["strike"], row["option_type"]),
+    )
+    payload = {
+        "actual_spot": actual_spot,
+        "contracts": contract_rows,
+        "valuation_at": valuation_at.astimezone(UTC).isoformat(),
+        "min_calendar_dte": min_dte,
+        "max_calendar_dte": max_dte,
+        "min_strike_pct": min_pct,
+        "max_strike_pct": max_pct,
+        "quality_thresholds": {
+            "min_mid": MIN_MID,
+            "max_relative_spread": MAX_RELATIVE_SPREAD,
+            "model_bounds_tolerance": MODEL_BOUNDS_TOLERANCE,
+            "min_time_value": MIN_TIME_VALUE,
+            "iv_low": IV_LOW,
+            "iv_high": IV_HIGH,
+            "iv_xtol": IV_XTOL,
+            "iv_rtol": IV_RTOL,
+            "iv_maxiter": IV_MAXITER,
+            "reprice_tolerance": REPRICE_TOLERANCE,
+        },
+    }
+    return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+
+
+def _original_metadata(dashboard: dict) -> dict:
+    """Model/instrument/provenance metadata the report must surface
+    (Section 12) -- "unavailable" for a legacy v1 snapshot, which predates
+    ADR-0001 and never resolved any of this."""
+    if dashboard["schema_version"] == 1:
+        return {
+            "algorithm_version": "1",
+            "model_id": "legacy_continuous_yield",
+            "instrument_class": None,
+            "rate_provenance": "unavailable (legacy snapshot)",
+            "review": "unavailable (legacy snapshot)",
+        }
+    parameters = dashboard["parameters"]
+    market_inputs = dashboard["market_inputs"]
+    rate = market_inputs["rate"]
+    review = market_inputs["dividend_schedule"]["review"]
+    return {
+        "algorithm_version": parameters["algorithm_version"],
+        "model_id": parameters["model_id"],
+        "instrument_class": dashboard["instrument"]["instrument_class"],
+        "rate_provenance": {
+            "source_provider_id": rate["source_provider_id"],
+            "effective_date": rate["effective_date"],
+            "fetched_at": rate["fetched_at"],
+        },
+        "review": {
+            "coverage_start": review["coverage_start"],
+            "coverage_end": review["coverage_end"],
+            "reviewed_at": review["reviewed_at"],
+            "source_refs": review["source_refs"],
+        },
+    }
 
 
 @dataclass
@@ -172,20 +289,28 @@ def _resolve_scenario(
     symbol: str,
     valuation_at: datetime,
     latest_in_scope_expiration,
-) -> tuple[float, tuple[ResolvedDividend, ...]]:
+) -> tuple[float, tuple[ResolvedDividend, ...], bool]:
     """Reads the scenario file explicitly supplied by --scenario-inputs
     (never the live reference cache or a fresh fetch) through the same
     manual-path resolvers the live app uses, so the same rules (freshness,
-    review coverage, matching) apply here."""
+    review coverage, matching) apply here.
+
+    Also reports whether this scenario's inputs were reviewed/entered after
+    the snapshot's own valuation time (Section 12/14's `known_after_valuation`
+    label) -- using the review's own reviewed_at/entered_at timestamp, not a
+    per-event declaration date, since "a declaration date alone does not
+    establish when this application knew an event."."""
     scenario = load_local_reference_inputs(scenario_path)
-    if scenario.manual_rate is None:
+    manual_rate = scenario.manual_rate
+    if manual_rate is None:
         raise SystemExit(f"{scenario_path} must supply manual_rate")
     if symbol not in scenario.schedules:
         raise SystemExit(f"{scenario_path} has no reviewed schedule for {symbol!r}")
+    review = scenario.schedules[symbol]
 
     resolved_rate = resolve_rate(
         rate_source="manual",
-        manual=scenario.manual_rate,
+        manual=manual_rate,
         provider=None,
         valuation_at=valuation_at,
         attempt_started_at=valuation_at,
@@ -193,14 +318,17 @@ def _resolve_scenario(
     )
     schedule, _ = resolve_dividend_schedule(
         dividend_source="manual_schedule",
-        review=scenario.schedules[symbol],
+        review=review,
         provider=None,
         valuation_at=valuation_at,
         attempt_started_at=valuation_at,
         latest_in_scope_expiration=latest_in_scope_expiration,
         db_path="unused",
     )
-    return resolved_rate.rate_cc, schedule.events
+    rate_is_hindsight = manual_rate.entered_at > valuation_at
+    review_is_hindsight = review.reviewed_at > valuation_at
+    known_after_valuation = rate_is_hindsight or review_is_hindsight
+    return resolved_rate.rate_cc, schedule.events, known_after_valuation
 
 
 def _legacy_context(
@@ -347,11 +475,15 @@ def _write_contracts_csv(
         "forward",
         "iv",
         "gamma",
+        "exposure_per_1pct",
+        "exposure_per_1dollar",
         "exclusion_reason",
-        "iv_diff_from_saved",
+        "iv_pct_diff_from_saved",
         "iv_pct_diff_reason",
-        "gamma_diff_from_saved",
+        "iv_abs_diff_from_saved",
+        "gamma_pct_diff_from_saved",
         "gamma_pct_diff_reason",
+        "gamma_abs_diff_from_saved",
     ]
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -362,8 +494,10 @@ def _write_contracts_csv(
                 key = (pq.quote.expiration, pq.quote.strike, pq.quote.option_type)
                 saved = saved_priced.get(key, {})
                 ctx = contexts[pq.quote.expiration]
-                iv_diff, iv_reason = _pct_diff(pq.iv, saved.get("iv"))
-                gamma_diff, gamma_reason = _pct_diff(pq.gamma, saved.get("gamma"))
+                iv_pct_diff, iv_reason = _pct_diff(pq.iv, saved.get("iv"))
+                gamma_pct_diff, gamma_reason = _pct_diff(pq.gamma, saved.get("gamma"))
+                exposure_per_1pct = _exposure_for(pq, ctx.actual_spot)
+                display_factor = 1 / (0.01 * ctx.actual_spot)
                 writer.writerow(
                     {
                         "scenario": scenario,
@@ -383,11 +517,17 @@ def _write_contracts_csv(
                         "forward": ctx.forward,
                         "iv": pq.iv,
                         "gamma": pq.gamma,
+                        "exposure_per_1pct": exposure_per_1pct,
+                        "exposure_per_1dollar": (
+                            None if exposure_per_1pct is None else exposure_per_1pct * display_factor
+                        ),
                         "exclusion_reason": pq.exclusion_reason,
-                        "iv_diff_from_saved": iv_diff,
+                        "iv_pct_diff_from_saved": iv_pct_diff,
                         "iv_pct_diff_reason": iv_reason,
-                        "gamma_diff_from_saved": gamma_diff,
+                        "iv_abs_diff_from_saved": _abs_diff(pq.iv, saved.get("iv")),
+                        "gamma_pct_diff_from_saved": gamma_pct_diff,
                         "gamma_pct_diff_reason": gamma_reason,
+                        "gamma_abs_diff_from_saved": _abs_diff(pq.gamma, saved.get("gamma")),
                     }
                 )
 
@@ -406,10 +546,12 @@ def _write_cells_csv(path: Path, gex_by_scenario: dict[str, GexData], actual_spo
         "put_exposure_per_1dollar",
         "signed_proxy_per_1dollar",
         "gross_exposure_per_1dollar",
-        "signed_proxy_diff_from_saved",
+        "signed_proxy_pct_diff_from_saved",
         "signed_proxy_pct_diff_reason",
-        "gross_exposure_diff_from_saved",
+        "signed_proxy_abs_diff_from_saved",
+        "gross_exposure_pct_diff_from_saved",
         "gross_exposure_pct_diff_reason",
+        "gross_exposure_abs_diff_from_saved",
     ]
     factor = 1 / (0.01 * actual_spot)  # Section 10's frontend display conversion, applied here for the report
 
@@ -432,14 +574,12 @@ def _write_cells_csv(path: Path, gex_by_scenario: dict[str, GexData], actual_spo
                 for s_idx, strike in enumerate(gex.strikes):
                     cell = gex.cells[e_idx][s_idx]
                     saved_cell = saved_by_key.get((expiration, strike))
-                    signed_diff, signed_reason = _pct_diff(
-                        cell.signed_proxy if cell else None,
-                        saved_cell.signed_proxy if saved_cell else None,
-                    )
-                    gross_diff, gross_reason = _pct_diff(
-                        cell.gross_exposure if cell else None,
-                        saved_cell.gross_exposure if saved_cell else None,
-                    )
+                    saved_signed = saved_cell.signed_proxy if saved_cell else None
+                    saved_gross = saved_cell.gross_exposure if saved_cell else None
+                    cell_signed = cell.signed_proxy if cell else None
+                    cell_gross = cell.gross_exposure if cell else None
+                    signed_pct_diff, signed_reason = _pct_diff(cell_signed, saved_signed)
+                    gross_pct_diff, gross_reason = _pct_diff(cell_gross, saved_gross)
                     writer.writerow(
                         {
                             "scenario": scenario,
@@ -454,10 +594,12 @@ def _write_cells_csv(path: Path, gex_by_scenario: dict[str, GexData], actual_spo
                             "put_exposure_per_1dollar": scaled(cell.put_exposure if cell else None),
                             "signed_proxy_per_1dollar": scaled(cell.signed_proxy if cell else None),
                             "gross_exposure_per_1dollar": scaled(cell.gross_exposure if cell else None),
-                            "signed_proxy_diff_from_saved": signed_diff,
+                            "signed_proxy_pct_diff_from_saved": signed_pct_diff,
                             "signed_proxy_pct_diff_reason": signed_reason,
-                            "gross_exposure_diff_from_saved": gross_diff,
+                            "signed_proxy_abs_diff_from_saved": _abs_diff(cell_signed, saved_signed),
+                            "gross_exposure_pct_diff_from_saved": gross_pct_diff,
                             "gross_exposure_pct_diff_reason": gross_reason,
+                            "gross_exposure_abs_diff_from_saved": _abs_diff(cell_gross, saved_gross),
                         }
                     )
 
@@ -470,6 +612,8 @@ def _write_inputs_json(
     original_events: tuple[ResolvedDividend, ...],
     scenario_r: float,
     scenario_events: tuple[ResolvedDividend, ...],
+    known_after_valuation: bool,
+    quote_time_hash_value: str,
 ) -> None:
     payload = {
         "snapshot_id": str(saved.snapshot_id),
@@ -480,6 +624,8 @@ def _write_inputs_json(
         "schema_version": saved.dashboard["schema_version"],
         "calculation_input_hash": saved.dashboard.get("calculation_input_hash"),
         "reference_bundle_hash": saved.dashboard.get("market_inputs", {}).get("reference_bundle_hash"),
+        "quote_time_hash": quote_time_hash_value,
+        "original_metadata": _original_metadata(saved.dashboard),
         "original": {
             "rate_cc_or_r": original_r,
             "q": original_q,
@@ -490,6 +636,7 @@ def _write_inputs_json(
             "dividend_events": [json.loads(e.model_dump_json()) for e in scenario_events],
         },
         "label": "counterfactual sensitivity, not a historical trading backtest",
+        "known_after_valuation": known_after_valuation,
     }
     path.write_text(json.dumps(payload, indent=2, default=str))
 
@@ -513,19 +660,35 @@ def _write_summary_md(
     original_events: tuple[ResolvedDividend, ...],
     scenario_events: tuple[ResolvedDividend, ...],
     expirations,
+    known_after_valuation: bool,
+    quote_time_hash_value: str,
 ) -> None:
+    metadata = _original_metadata(saved.dashboard)
     lines = [
         f"# Reconciliation report: {saved.symbol} snapshot {saved.snapshot_id}",
         "",
         "counterfactual sensitivity, not a historical trading backtest.",
+    ]
+    if known_after_valuation:
+        lines.append(
+            "**known_after_valuation**: the scenario's rate/dividend inputs were reviewed/entered "
+            "after this snapshot's valuation time -- a declaration date alone does not establish "
+            "when this application knew the event."
+        )
+    lines += [
         "",
         f"- Source mode: {saved.source_mode}",
         f"- Collected at: {saved.collected_at}",
         f"- Valuation at (fixed for every scenario): {saved.valuation_at}",
         f"- Saved schema version: {saved.dashboard['schema_version']} "
         f"({'legacy continuous-yield' if original_is_legacy else 'cash_pv_bsm_v2'})",
+        f"- Instrument class: {metadata['instrument_class']}",
+        f"- Model: {metadata['model_id']} (algorithm_version {metadata['algorithm_version']})",
+        f"- Original rate provenance: {metadata['rate_provenance']}",
+        f"- Original review: {metadata['review']}",
         f"- calculation_input_hash: {saved.dashboard.get('calculation_input_hash')}",
         f"- reference_bundle_hash: {saved.dashboard.get('market_inputs', {}).get('reference_bundle_hash')}",
+        f"- quote_time_hash (identical across all four scenarios by construction): {quote_time_hash_value}",
         "",
         "## Baseline reproduction (`saved` scenario vs. the actual saved snapshot)",
         "",
@@ -620,12 +783,22 @@ def main(argv: list[str] | None = None) -> int:
         (e for e in expirations if min_dte <= calendar_dte(e, saved.valuation_at) <= max_dte),
         default=None,
     )
-    scenario_r, scenario_events = _resolve_scenario(
+    scenario_r, scenario_events, known_after_valuation = _resolve_scenario(
         args.scenario_inputs, saved.symbol, saved.valuation_at, latest_in_scope_expiration
+    )
+    quote_time_hash_value = _quote_time_hash(
+        saved.contracts, actual_spot, saved.valuation_at, min_dte, max_dte, min_pct, max_pct
     )
 
     priced_by_scenario, gex_by_scenario, quality_by_scenario, contexts_by_scenario = {}, {}, {}, {}
     for scenario in SCENARIOS:
+        # N7: every scenario prices the identical quote/OI/spot/time population
+        # (Section 12); this hash never depends on scenario_r/scenario_events,
+        # so recomputing it per scenario must always match the value above.
+        recomputed = _quote_time_hash(
+            saved.contracts, actual_spot, saved.valuation_at, min_dte, max_dte, min_pct, max_pct
+        )
+        assert recomputed == quote_time_hash_value
         contexts = _build_scenario_contexts(
             scenario,
             expirations,
@@ -670,7 +843,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     _write_cells_csv(args.out / "cells.csv", gex_by_scenario, actual_spot)
     _write_inputs_json(
-        args.out / "inputs.json", saved, original_r, original_q, original_events, scenario_r, scenario_events
+        args.out / "inputs.json",
+        saved,
+        original_r,
+        original_q,
+        original_events,
+        scenario_r,
+        scenario_events,
+        known_after_valuation,
+        quote_time_hash_value,
     )
     _write_summary_md(
         args.out / "summary.md",
@@ -682,6 +863,8 @@ def main(argv: list[str] | None = None) -> int:
         original_events,
         scenario_events,
         expirations,
+        known_after_valuation,
+        quote_time_hash_value,
     )
 
     if not baseline_ok:

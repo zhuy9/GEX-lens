@@ -552,5 +552,180 @@ def test_null_iv_never_becomes_zero_in_the_percentage_diff(tmp_path):
     null_iv_rows = [r for r in rows if r["scenario"] == "cash_only" and r["iv"] == ""]
     assert null_iv_rows
     for row in null_iv_rows:
-        assert row["iv_diff_from_saved"] == ""
+        assert row["iv_pct_diff_from_saved"] == ""
         assert row["iv_pct_diff_reason"] == "missing_value"
+        assert row["iv_abs_diff_from_saved"] == ""
+
+
+def test_abs_diff_is_reported_even_when_old_is_zero():
+    # Section 12: "Always report the dollar difference when both values
+    # exist" -- unlike the percentage diff, old==0 is not a special case.
+    assert reconcile._pct_diff(5.0, 0.0) == (None, "old_is_zero")
+    assert reconcile._abs_diff(5.0, 0.0) == 5.0
+    assert reconcile._abs_diff(None, 0.0) is None
+    assert reconcile._abs_diff(5.0, None) is None
+
+
+def test_contracts_csv_reports_both_gex_units_per_contract(tmp_path):
+    # Section 12: "For every contract/scenario: ... both GEX units."
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    snapshot_id = _save_v2_snapshot(db_path)
+    scenario_path = tmp_path / "scenario.json"
+    _write_scenario(scenario_path, events=[SCENARIO_EVENT])
+    out_dir = tmp_path / "report"
+    reconcile.main(
+        [
+            "--db",
+            db_path,
+            "--snapshot-id",
+            snapshot_id,
+            "--scenario-inputs",
+            str(scenario_path),
+            "--out",
+            str(out_dir),
+        ]
+    )
+
+    with (out_dir / "contracts.csv").open() as f:
+        rows = list(csv.DictReader(f))
+    priced_rows = [r for r in rows if r["scenario"] == "saved" and r["exposure_per_1pct"] != ""]
+    assert priced_rows
+    for row in priced_rows:
+        per_1pct = float(row["exposure_per_1pct"])
+        per_1dollar = float(row["exposure_per_1dollar"])
+        spot = float(row["actual_spot"])
+        assert per_1dollar == per_1pct / (0.01 * spot)
+
+
+def test_known_after_valuation_flagged_when_scenario_reviewed_after_valuation(tmp_path):
+    # Section 12/14: "If input knowledge postdates valuation, explicitly
+    # mark it known_after_valuation."
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    snapshot_id = _save_v2_snapshot(db_path)
+    scenario_path = tmp_path / "scenario.json"
+    scenario_path.write_text(
+        json.dumps(
+            {
+                "input_schema_version": 1,
+                "manual_rate": {
+                    "rate_cc": 0.05,
+                    "effective_date": "2026-01-02",
+                    "entered_at": "2026-06-01T00:00:00Z",  # long after VALUATION_AT
+                    "source_ref": "synthetic-scenario",
+                    "reason": "hindsight test",
+                },
+                "schedules": {
+                    "SPY": {
+                        "symbol": "SPY",
+                        "reviewed_at": "2026-01-02T21:00:00Z",
+                        "coverage_start": "2026-01-02",
+                        "coverage_end": "2026-04-02",
+                        "no_other_events_expected": True,
+                        "source_refs": ["synthetic-scenario"],
+                        "expected_events": [],
+                    }
+                },
+            }
+        )
+    )
+    out_dir = tmp_path / "report"
+    reconcile.main(
+        [
+            "--db",
+            db_path,
+            "--snapshot-id",
+            snapshot_id,
+            "--scenario-inputs",
+            str(scenario_path),
+            "--out",
+            str(out_dir),
+        ]
+    )
+
+    inputs = json.loads((out_dir / "inputs.json").read_text())
+    assert inputs["known_after_valuation"] is True
+    assert "known_after_valuation" in (out_dir / "summary.md").read_text()
+
+
+def test_quote_time_hash_is_identical_regardless_of_scenario_inputs(tmp_path):
+    # N7: "Changing only scenario inputs must leave the normalized
+    # quote/OI/spot/time hash component unchanged."
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    snapshot_id = _save_v2_snapshot(db_path)
+
+    def run(rate_cc: float) -> str:
+        scenario_path = tmp_path / f"scenario-{rate_cc}.json"
+        _write_scenario(scenario_path, rate_cc=rate_cc, events=[SCENARIO_EVENT])
+        out_dir = tmp_path / f"report-{rate_cc}"
+        reconcile.main(
+            [
+                "--db",
+                db_path,
+                "--snapshot-id",
+                snapshot_id,
+                "--scenario-inputs",
+                str(scenario_path),
+                "--out",
+                str(out_dir),
+            ]
+        )
+        return json.loads((out_dir / "inputs.json").read_text())["quote_time_hash"]
+
+    assert run(0.02) == run(0.09)
+
+
+def test_inputs_json_includes_model_and_review_metadata_for_v2(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    snapshot_id = _save_v2_snapshot(db_path)
+    scenario_path = tmp_path / "scenario.json"
+    _write_scenario(scenario_path, events=[SCENARIO_EVENT])
+    out_dir = tmp_path / "report"
+    reconcile.main(
+        [
+            "--db",
+            db_path,
+            "--snapshot-id",
+            snapshot_id,
+            "--scenario-inputs",
+            str(scenario_path),
+            "--out",
+            str(out_dir),
+        ]
+    )
+
+    metadata = json.loads((out_dir / "inputs.json").read_text())["original_metadata"]
+    assert metadata["algorithm_version"] == "2"
+    assert metadata["model_id"] == "cash_pv_bsm_v2"
+    assert metadata["instrument_class"] == "etf"
+    assert metadata["rate_provenance"]["source_provider_id"] == "fixture"
+    assert metadata["review"]["coverage_start"] == "2026-01-02"
+
+
+def test_inputs_json_marks_v1_metadata_unavailable(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    snapshot_id = _save_v1_snapshot(db_path)
+    scenario_path = tmp_path / "scenario.json"
+    _write_scenario(scenario_path, events=[SCENARIO_EVENT])
+    out_dir = tmp_path / "report"
+    reconcile.main(
+        [
+            "--db",
+            db_path,
+            "--snapshot-id",
+            snapshot_id,
+            "--scenario-inputs",
+            str(scenario_path),
+            "--out",
+            str(out_dir),
+        ]
+    )
+
+    metadata = json.loads((out_dir / "inputs.json").read_text())["original_metadata"]
+    assert metadata["algorithm_version"] == "1"
+    assert metadata["instrument_class"] is None
+    assert metadata["rate_provenance"] == "unavailable (legacy snapshot)"
