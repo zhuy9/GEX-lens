@@ -200,14 +200,26 @@ def _validate_review(
         )
 
 
-def _normalize_source_records(records: tuple[DividendRecord, ...]) -> dict[date, DividendRecord]:
+def _normalize_source_records(
+    records: tuple[DividendRecord, ...], valuation_at: datetime
+) -> dict[date, DividendRecord]:
     """Section 7.2: exact duplicates collapse; conflicting non-null amounts
     for the same ex-date fail. Only ordinary_cash records are usable here --
-    special/other/unknown distributions are unsupported for automatic pricing."""
+    special/other/unknown distributions are unsupported for automatic pricing.
+    A declaration date after valuation_at is information this application
+    could not have had at valuation time; live refreshes must reject it,
+    not silently price with foresight."""
     by_ex_date: dict[date, DividendRecord] = {}
     for record in records:
         if record.kind != "ordinary_cash":
             continue
+        declaration_date = record.declaration_date
+        if declaration_date is not None and declaration_date > ny_local_date(valuation_at):
+            raise ProviderError(
+                "INPUT_KNOWLEDGE_AFTER_VALUATION",
+                f"Declaration date {declaration_date} for ex-date {record.ex_date} "
+                f"postdates the valuation date",
+            )
         existing = by_ex_date.get(record.ex_date)
         if existing is None or existing == record:
             by_ex_date[record.ex_date] = record
@@ -370,7 +382,7 @@ def resolve_dividend_schedule(
             attempt_started_at=attempt_started_at,
             force_refresh=force_refresh,
         )
-        source_by_ex_date = _normalize_source_records(feed.records)
+        source_by_ex_date = _normalize_source_records(feed.records, valuation_at)
 
         expected_ex_dates = {event.ex_date for event in review.expected_events}
         unexpected = sorted(

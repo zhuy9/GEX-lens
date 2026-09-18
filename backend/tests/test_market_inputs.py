@@ -57,14 +57,16 @@ def _expected(
     )
 
 
-def _record(ex_date, amount=None, payment_date=None, kind="ordinary_cash") -> DividendRecord:
+def _record(
+    ex_date, amount=None, payment_date=None, kind="ordinary_cash", declaration_date=None
+) -> DividendRecord:
     return DividendRecord(
         provider_record_id=None,
         symbol="AAPL",
         currency="USD",
         ex_date=date.fromisoformat(ex_date),
         payment_date=date.fromisoformat(payment_date) if payment_date else None,
-        declaration_date=None,
+        declaration_date=date.fromisoformat(declaration_date) if declaration_date else None,
         amount=Decimal(amount) if amount is not None else None,
         kind=kind,
         source_ref="test",
@@ -291,6 +293,24 @@ def test_unsupported_record_kind_is_ignored_not_used_for_pricing(tmp_path):
     schedule, _ = _resolve_dividends(db_path, dividend_source="test_stub", review=review, provider=provider)
     assert schedule.events[0].amount == Decimal("0.25")  # owner's own declared amount, not the "other" record
     assert schedule.events[0].amount_status == "owner_declared"
+
+
+def test_source_record_declared_after_valuation_is_rejected(tmp_path):
+    # Section 7.2: a declaration date later than valuation_at is information
+    # this application could not have had at valuation time.
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    review = _review(
+        expected_events=(_expected("e1", "2026-02-05", amount="0.25", amount_status="estimated"),)
+    )
+    provider = StubDividendProvider(
+        records=(
+            _record("2026-02-05", amount="0.25", declaration_date="2026-06-01"),
+        )  # after VALUATION_AT (Jan 10)
+    )
+    with pytest.raises(ProviderError) as exc:
+        _resolve_dividends(db_path, dividend_source="test_stub", review=review, provider=provider)
+    assert exc.value.code == "INPUT_KNOWLEDGE_AFTER_VALUATION"
 
 
 def test_history_only_feed_with_no_upcoming_rows_uses_owner_review_estimate(tmp_path):
