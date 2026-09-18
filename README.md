@@ -253,15 +253,16 @@ python reconcile.py --db data/options.duckdb `
 - [backend/tests/test_provider_boundary.py](backend/tests/test_provider_boundary.py)
   lists the boundary tests a provider must pass.
 
-## Docs
+## Documentation
 
-- [Product requirements (PRD)](docs/options_analytics_mvp_prd.md)
-- [ADR-0001: pricing inputs, dividends, GEX units](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)
-  and its [PRD supersession map](docs/adr-0001-prd-supersession.md)
-- Source contracts: [option chain](docs/source-contract.md),
-  [dividends](docs/dividend-source-contract.md), [SOFR rate](docs/rate-source-contract.md)
-- Validation runs: [PRD M5](docs/m5-validation.md),
-  [ADR-0001 M6](docs/adr-0001-validation.md)
+- [Product requirements](docs/options_analytics_mvp_prd.md)
+- [ADR-0001: pricing inputs, dividends, and GEX units](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)
+- Data-source contracts:
+  - [Nasdaq option chain](docs/source-contract.md)
+  - [Nasdaq dividends](docs/dividend-source-contract.md)
+  - [NY Fed SOFR](docs/rate-source-contract.md)
+
+Current build/test status is reported by GitHub Actions.
 
 ## Data sources and usage rights
 

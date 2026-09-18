@@ -19,15 +19,9 @@ snapshot.
 
 ## ADR-0001
 
-[docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)
-is accepted and implemented. It overrides only the PRD provisions listed in
-its Section 3 (cash dividends, reference-rate acquisition, GEX unit
-conversion, schema v2, `reconcile.py`, module list) — every other PRD
-provision below still applies unchanged. See
-[docs/adr-0001-prd-supersession.md](docs/adr-0001-prd-supersession.md) for
-the exact provision-by-provision mapping, and
-[docs/adr-0001-validation.md](docs/adr-0001-validation.md) for its M6
-hand-off evidence. Where this section and the PRD disagree, ADR-0001 wins.
+ADR-0001 is accepted and implemented. It overrides the PRD provisions
+identified in ADR-0001 Section 3. All other PRD provisions remain in force.
+Where ADR-0001 and the PRD disagree, ADR-0001 wins.
 
 ## Plan and milestone rules
 
