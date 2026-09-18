@@ -438,6 +438,62 @@ def test_price_quote_v2_uses_actual_spot_for_scope_even_with_a_different_model_s
     assert priced.exclusion_reason == "OUT_OF_SCOPE"
 
 
+def test_gex_exposure_scales_by_actual_spot_not_model_spot_when_they_differ():
+    # N5 (Section 14): "Repeat with model_spot != actual_spot and assert the
+    # scaling still uses actual spot" -- for the GEX exposure number itself,
+    # not just OUT_OF_SCOPE eligibility (covered above).
+    event = make_dividend(ex_date="2026-01-10", amount="1.25")
+    context = build_expiry_pricing_context(
+        expiration=date(2026, 1, 31),
+        valuation_at=VALUATION_AT,
+        actual_spot=100.0,
+        r_cc=0.04,
+        dividend_events=(event,),
+    )
+    assert context.model_spot != context.actual_spot
+
+    sigma = 0.20
+    call_price = bsm_price("C", context.model_spot, 100.0, context.T, context.r_cc, 0.0, sigma)
+    put_price = bsm_price("P", context.model_spot, 100.0, context.T, context.r_cc, 0.0, sigma)
+    call = make_quote(
+        option_type="C",
+        bid=round(call_price - 0.01, 4),
+        ask=round(call_price + 0.01, 4),
+        open_interest=1000,
+    )
+    put = make_quote(
+        option_type="P",
+        bid=round(put_price - 0.01, 4),
+        ask=round(put_price + 0.01, 4),
+        open_interest=600,
+    )
+    priced, gex, _, _ = analyze_snapshot_v2(
+        (call, put),
+        actual_spot=context.actual_spot,
+        contexts={call.expiration: context},
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
+        source_row_count=2,
+    )
+    call_pq = next(pq for pq in priced if pq.quote.option_type == "C")
+    put_pq = next(pq for pq in priced if pq.quote.option_type == "P")
+    assert call_pq.gamma is not None
+    assert put_pq.gamma is not None
+
+    cell = gex.cells[0][0]
+    assert cell is not None
+    expected_call = call_pq.gamma * 1000 * 100 * context.actual_spot**2 * 0.01
+    expected_put = put_pq.gamma * 600 * 100 * context.actual_spot**2 * 0.01
+    assert cell.call_exposure == pytest.approx(expected_call, rel=1e-9)
+    assert cell.put_exposure == pytest.approx(expected_put, rel=1e-9)
+    # A wrong implementation that scaled by model_spot instead would give a
+    # detectably different number here, since model_spot != actual_spot.
+    wrong_call = call_pq.gamma * 1000 * 100 * context.model_spot**2 * 0.01
+    assert cell.call_exposure != pytest.approx(wrong_call, rel=1e-9)
+
+
 # --- Section 7.5: price-time alignment -----------------------------------
 
 

@@ -195,6 +195,38 @@ def test_rejected_refresh_requests_make_zero_provider_calls(tmp_path):
     assert stub.calls == 1  # unchanged
 
 
+def test_one_symbols_dividend_adapter_error_does_not_affect_another_symbol(tmp_path):
+    # N8: "Test that an AAPL adapter error cannot cause an SPY schedule or a
+    # synthetic schedule to be used." Each symbol resolves its own dividend
+    # provider independently (settings.dividend_sources[symbol] lookup), so
+    # one symbol's adapter failure must never leak into another's refresh.
+    from fixtures import FixtureDividendProvider, FixtureProvider
+
+    class FailingDividendProvider:
+        def fetch_dividends(self, symbol: str):
+            raise ProviderError("DIVIDEND_SCHEMA_ERROR", "boom")
+
+    settings = make_settings(str(tmp_path / "t.duckdb")).model_copy(
+        update={"refresh_min_interval_seconds": 0}
+    )
+    dividend_providers = {
+        "SPY": FixtureDividendProvider(),
+        "QQQ": FixtureDividendProvider(),
+        "AAPL": FailingDividendProvider(),
+    }
+    client = TestClient(
+        create_app(settings, provider=FixtureProvider(), dividend_providers=dividend_providers)
+    )
+
+    failed = client.post("/api/dashboard/AAPL/refresh")
+    assert failed.status_code == 502
+    assert failed.json()["error"]["code"] == "DIVIDEND_SCHEMA_ERROR"
+
+    ok = client.post("/api/dashboard/SPY/refresh")
+    assert ok.status_code == 200
+    assert ok.json()["market_inputs"]["dividend_schedule"]["review"]["symbol"] == "SPY"
+
+
 def test_failed_refresh_still_consumes_cooldown(tmp_path):
     # M3.7: "A failed permitted attempt still consumes cooldown"
     settings = make_settings(str(tmp_path / "t.duckdb"))

@@ -269,4 +269,51 @@ describe("ADR-0001 M1: move-unit display conversion", () => {
 			expect.stringContaining("Call OI: 1,000"),
 		);
 	});
+
+	it("switching units leaves status and relative color intensity unchanged", () => {
+		// N5 (Section 14): "Changing units must leave gamma, OI, IV, spot,
+		// eligibility, and relative color intensity unchanged." Two distinct
+		// cells (different magnitudes) so `bound` is non-trivial, and value
+		// and bound must scale by the identical factor for color to match.
+		const smallCell: GexCell = { ...N5_CELL, signed_proxy: 40_000 };
+		const gex = makeGex({
+			strikes: ["195.0", "200.0"],
+			cells: [[N5_CELL, smallCell]],
+		});
+
+		const { getAllByRole, rerender } = render(
+			<GexHeatmap
+				gex={gex}
+				mode="signed"
+				unit="per_1pct"
+				spot={200}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+		const cellsBefore = getAllByRole("cell").filter((c) => c.title);
+		const before = cellsBefore.map((c) => ({
+			background: c.style.backgroundColor,
+			color: c.style.color,
+			status: c.title.match(/Status: \w+/)?.[0],
+		}));
+
+		rerender(
+			<GexHeatmap
+				gex={gex}
+				mode="signed"
+				unit="per_1dollar"
+				spot={200}
+				valuationAt="2026-09-17T02:00:00Z"
+			/>,
+		);
+		const cellsAfter = getAllByRole("cell").filter((c) => c.title);
+		const after = cellsAfter.map((c) => ({
+			background: c.style.backgroundColor,
+			color: c.style.color,
+			status: c.title.match(/Status: \w+/)?.[0],
+		}));
+
+		expect(after).toEqual(before);
+		expect(before.some((c) => c.background !== "")).toBe(true); // non-vacuous
+	});
 });

@@ -6,6 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from analytics import (
+    MAX_BRIDGE_GAP,
+    _piecewise_linear,
     analyze_snapshot,
     bsm_gamma,
     bsm_price,
@@ -191,6 +193,65 @@ def test_gex_exposure_formula_matches_reference_values():
     assert cell.status == "COMPLETE"
 
 
+def test_n5_gex_scaling_matches_the_pinned_reference_table():
+    # ADR-0001 N5 (Section 14): S=200, gamma=0.02, multiplier=100,
+    # call OI=1000, put OI=600 -- exact pinned per-1%/per-$1 values.
+    call = make_quote(strike=Decimal("200"), option_type="C", open_interest=1000)
+    put = make_quote(strike=Decimal("200"), option_type="P", open_interest=600)
+    priced = []
+    for contract in (call, put):
+        pq = price_quote(
+            contract,
+            spot=200.0,
+            r=0.04,
+            q=0.0,
+            valuation_at=VALUATION_AT,
+            min_calendar_dte=1,
+            max_calendar_dte=60,
+            min_strike_pct=0.80,
+            max_strike_pct=1.20,
+        )
+        priced.append(pq.model_copy(update={"gamma": 0.02}))
+    gex = build_gex(tuple(priced), spot=200.0)
+    cell = gex.cells[0][0]
+    assert cell is not None
+    assert cell.call_exposure == pytest.approx(800_000.0, abs=1e-6)
+    assert cell.put_exposure == pytest.approx(480_000.0, abs=1e-6)
+    assert cell.signed_proxy == pytest.approx(320_000.0, abs=1e-6)
+    assert cell.gross_exposure == pytest.approx(1_280_000.0, abs=1e-6)
+
+    factor = 1 / (0.01 * 200.0)  # Section 10's per-$1 display conversion
+    assert cell.call_exposure * factor == pytest.approx(400_000.0, abs=1e-6)
+    assert cell.put_exposure * factor == pytest.approx(240_000.0, abs=1e-6)
+    assert cell.signed_proxy * factor == pytest.approx(160_000.0, abs=1e-6)
+    assert cell.gross_exposure * factor == pytest.approx(640_000.0, abs=1e-6)
+
+
+def test_negative_signed_proxy_is_produced_when_put_exposure_exceeds_call():
+    # N5: "Test ... negative signed values."
+    call = make_quote(option_type="C", open_interest=100)
+    put = make_quote(option_type="P", open_interest=1000)
+    priced = []
+    for contract in (call, put):
+        pq = price_quote(
+            contract,
+            spot=100.0,
+            r=0.04,
+            q=0.0,
+            valuation_at=VALUATION_AT,
+            min_calendar_dte=1,
+            max_calendar_dte=60,
+            min_strike_pct=0.80,
+            max_strike_pct=1.20,
+        )
+        priced.append(pq.model_copy(update={"gamma": 0.02}))
+    gex = build_gex(tuple(priced), spot=100.0)
+    cell = gex.cells[0][0]
+    assert cell is not None
+    assert cell.signed_proxy is not None
+    assert cell.signed_proxy < 0
+
+
 def test_nonstandard_multiplier_is_excluded_not_silently_priced_as_100():
     # R12: _exposure_for's formula always multiplies by the fixed 100 from
     # PRD 7 -- it never reads quote.multiplier. A multiplier=50 contract
@@ -301,6 +362,79 @@ def test_constant_iv_surface_recovers_input_iv():
                 assert iv == pytest.approx(sigma, abs=1e-6)
                 populated += 1
     assert populated > 20  # a meaningful, non-vacuous chunk of the grid is filled
+
+
+def test_n6_surface_selects_the_correct_side_and_k_matches_the_forward():
+    # N6 (Section 14): "Verify selected call/put sides and k=ln(K/F) against
+    # each expiry's saved forward." Calls and puts get deliberately
+    # different vols: if the wrong side were ever chosen, the recovered IV
+    # would betray it.
+    spot, r, q = 100.0, 0.04, 0.0
+    used_sigma, unused_sigma = 0.25, 0.60
+    baseline = ny_local_date(VALUATION_AT)
+    quotes = []
+    forwards = {}
+    for dte in (30, 60):
+        expiration = baseline + timedelta(days=dte)
+        t = year_fraction(expiration, VALUATION_AT)
+        forward = spot * math.exp((r - q) * t)
+        forwards[expiration] = forward
+        for ratio in (0.90, 0.95, 1.0, 1.05, 1.10):
+            strike = round(forward * ratio, 4)
+            below_forward = strike < forward
+            for option_type in ("C", "P"):
+                is_used_side = (option_type == "P") == below_forward
+                sigma = used_sigma if is_used_side else unused_sigma
+                price = bsm_price(option_type, spot, strike, t, r, q, sigma)
+                quotes.append(
+                    make_quote(
+                        expiration=expiration,
+                        strike=Decimal(str(strike)),
+                        option_type=option_type,
+                        bid=price,
+                        ask=price,
+                        last=price,
+                    )
+                )
+    priced = tuple(
+        price_quote(
+            q_,
+            spot=spot,
+            r=r,
+            q=q,
+            valuation_at=VALUATION_AT,
+            min_calendar_dte=1,
+            max_calendar_dte=90,
+            min_strike_pct=0.5,
+            max_strike_pct=1.5,
+        )
+        for q_ in quotes
+    )
+    surface = build_surface(priced, spot, r, q, VALUATION_AT)
+    assert surface.status == "READY"
+    assert surface.observations
+    for obs in surface.observations:
+        forward = forwards[obs.expiration]
+        assert obs.k == pytest.approx(math.log(float(obs.strike) / forward), abs=1e-9)
+        assert obs.iv == pytest.approx(used_sigma, abs=1e-4)
+
+
+def test_piecewise_linear_no_extrapolation_outside_the_grid():
+    # N6: "Preserve no-extrapolation ... tests."
+    xs, ws = [0.0, 0.1, 0.2], [1.0, 1.2, 1.5]
+    assert _piecewise_linear(xs, ws, -0.05) is None
+    assert _piecewise_linear(xs, ws, 0.25) is None
+
+
+def test_piecewise_linear_refuses_to_bridge_a_gap_wider_than_the_maximum():
+    # N6: "Preserve ... no-wide-gap-bridging tests."
+    xs, ws = [0.0, MAX_BRIDGE_GAP + 0.01], [1.0, 2.0]
+    assert _piecewise_linear(xs, ws, (MAX_BRIDGE_GAP + 0.01) / 2) is None
+
+
+def test_piecewise_linear_bridges_a_gap_within_the_maximum():
+    xs, ws = [0.0, MAX_BRIDGE_GAP], [1.0, 2.0]
+    assert _piecewise_linear(xs, ws, MAX_BRIDGE_GAP / 2) == pytest.approx(1.5)
 
 
 def test_analyze_snapshot_is_deterministic():

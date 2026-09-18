@@ -256,6 +256,40 @@ def test_new_unreviewed_source_event_invalidates_the_review(tmp_path):
     assert exc.value.code == "DIVIDEND_REVIEW_REQUIRED"
 
 
+def test_source_record_with_missing_amount_falls_back_to_owner_estimate(tmp_path):
+    # N8/M2.2: a matched source record with a null amount is a real observed
+    # shape (Section 7.2's "missing values stay missing") -- it must fall
+    # back to the owner's own estimate, never crash or resolve to zero.
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    review = _review(
+        expected_events=(_expected("e1", "2026-02-05", amount="0.24", amount_status="estimated"),)
+    )
+    provider = StubDividendProvider(records=(_record("2026-02-05", amount=None),))
+    schedule, warnings = _resolve_dividends(
+        db_path, dividend_source="test_stub", review=review, provider=provider
+    )
+    event = schedule.events[0]
+    assert event.amount == Decimal("0.24")
+    assert event.amount_status == "estimated"
+    assert "DIVIDEND_AMOUNT_ESTIMATED" in warnings
+
+
+def test_moved_ex_date_requires_review_not_a_silent_match_to_the_wrong_date(tmp_path):
+    # N8: "moved ex-dates" -- the source's ex-date shifts by a day relative
+    # to what the owner reviewed. Exact-date matching (Section 7.3) means
+    # this looks exactly like an unreviewed new event, not a fuzzy match.
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    review = _review(
+        expected_events=(_expected("e1", "2026-02-05", amount="0.24", amount_status="estimated"),)
+    )
+    provider = StubDividendProvider(records=(_record("2026-02-06", amount="0.25"),))  # shifted by 1 day
+    with pytest.raises(ProviderError) as exc:
+        _resolve_dividends(db_path, dividend_source="test_stub", review=review, provider=provider)
+    assert exc.value.code == "DIVIDEND_REVIEW_REQUIRED"
+
+
 def test_duplicate_source_rows_for_same_ex_date_collapse(tmp_path):
     db_path = str(tmp_path / "t.duckdb")
     storage.init_schema(db_path)
