@@ -7,7 +7,8 @@
   process, manual collection, the refresh lock/cooldown, 1-60 calendar DTE,
   0.80-1.20x strike scope, the three-symbol allowlist, no separate spot/quote
   request, null-vs-zero semantics, no trading signals) remains in force
-  unchanged.
+  unchanged. Later amendment (2026-09-17, outside ADR-0001): the allowlist
+  moved from `settings.json` to `backend/instruments.py`; see PRD 3.1.
 
 This is a standalone copy of ADR-0001 Section 3's table (an M0 deliverable in
 its own right, per Section 15's M0 acceptance criteria), with an added

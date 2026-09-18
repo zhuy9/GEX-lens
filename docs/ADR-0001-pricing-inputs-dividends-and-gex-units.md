@@ -76,7 +76,7 @@ Implement the following as one bounded post-MVP increment:
 | PRD 4: exact seven application modules | Allow `market_inputs.py`, `rates.py`, and the diagnostic entrypoint described below. | Separate new responsibilities without service/repository layers. |
 | PRD 11: no financial calculations in React | Permit only the specified GEX **unit conversion** and formatting in React. IV, gamma, dividend adjustment, and forward calculations stay in Python. | Avoid a server round trip for a display choice. |
 
-The following remain unchanged: React + shadcn/ui; HTML GEX table; Plotly IV surface; DuckDB; one Python process; manual collection; refresh lock and cooldown; 1-60 calendar DTE; strike scope 0.80-1.20 times actual spot; the initial three-symbol allowlist; no separate spot/quote request; null-versus-zero semantics; no trading signals or orders.
+The following remain unchanged: React + shadcn/ui; HTML GEX table; Plotly IV surface; DuckDB; one Python process; manual collection; refresh lock and cooldown; 1-60 calendar DTE; strike scope 0.80-1.20 times actual spot; the initial three-symbol allowlist (moved from `settings.json` to `backend/instruments.py` on 2026-09-17; see PRD 3.1); no separate spot/quote request; null-versus-zero semantics; no trading signals or orders.
 
 **0DTE, SPX/XSP/index support, gamma-flip calculations, and new charts are not added.** When comparing with a tool that includes 0DTE, compare common expirations or explicitly state the scope difference.
 
@@ -195,7 +195,7 @@ manual_reason: str | null
 
 ### 5.2 New configuration keys
 
-Keep operational settings such as `source_mode`, database path, allowlist, and cooldown. For the new pricing path, replace top-level `risk_free_rate` and `dividend_yields` with:
+Keep operational settings such as `source_mode`, database path, and cooldown. (The symbol allowlist was also a setting here until 2026-09-17; it now comes from `backend/instruments.py`, and `dividend_sources` must have one key per instrument there.) For the new pricing path, replace top-level `risk_free_rate` and `dividend_yields` with:
 
 ```json
 {
@@ -224,6 +224,7 @@ A local schedule entry has this structure; **all dates and amounts below are syn
   "manual_rate": null,
   "schedules": {
     "SPY": {
+      "symbol": "SPY",
       "reviewed_at": "2026-01-02T21:00:00Z",
       "coverage_start": "2026-01-02",
       "coverage_end": "2026-04-02",

@@ -1,7 +1,8 @@
 """Per-symbol verified instrument facts (ADR-0001 M0).
 
 One centralized table instead of separate ASSET_CLASS-style dicts scattered
-across nasdaq.py and app.py. Adding a symbol here requires re-running M0
+across nasdaq.py and app.py. It is also the app's enabled-symbol list, in
+dropdown order (the first is the default). Adding a symbol here requires re-running M0
 verification for it first (docs/source-contract.md,
 docs/dividend-source-contract.md) -- this is a record of what each source
 actually supports, not a runtime preference.

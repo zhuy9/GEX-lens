@@ -284,7 +284,7 @@ def test_repeated_fixture_collections_are_ordered_by_recency_not_uuid(tmp_path):
     # as "older" than an earlier one. Calls the orchestration function
     # directly since the refresh route's cooldown (irrelevant to this
     # storage-ordering question) would otherwise block the second call.
-    from app import _collect_and_save, build_dividend_provider, build_rate_provider
+    from app import SYMBOLS, _collect_and_save, build_dividend_provider, build_rate_provider
     from fixtures import FixtureProvider
 
     settings = make_settings(str(tmp_path / "t.duckdb"))
@@ -292,7 +292,7 @@ def test_repeated_fixture_collections_are_ordered_by_recency_not_uuid(tmp_path):
     provider = FixtureProvider()
     rate_provider = build_rate_provider(settings.rate_source)
     dividend_providers = {
-        symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in settings.symbols
+        symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in SYMBOLS
     }
 
     first = _collect_and_save(
@@ -655,3 +655,28 @@ def test_old_config_schema_raises_a_clear_migration_error(tmp_path):
     )
     with pytest.raises(ValueError, match="pre-ADR-0001"):
         _load_settings(path)
+
+
+def test_removed_symbols_key_raises_a_clear_migration_error(tmp_path):
+    from app import _load_settings
+
+    raw = json.loads(open("settings.example.json").read())
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({**raw, "symbols": ["SPY", "QQQ", "AAPL"]}))
+    with pytest.raises(ValueError, match="'symbols' was removed"):
+        _load_settings(path)
+
+
+@pytest.mark.parametrize(
+    "dividend_sources",
+    [
+        {"SPY": "fixture", "QQQ": "fixture"},  # missing an instrument
+        {"SPY": "fixture", "QQQ": "fixture", "AAPL": "fixture", "MSFT": "fixture"},  # unknown one
+    ],
+)
+def test_dividend_sources_must_cover_exactly_the_instruments(tmp_path, dividend_sources):
+    settings = make_settings(str(tmp_path / "t.duckdb")).model_copy(
+        update={"dividend_sources": dividend_sources}
+    )
+    with pytest.raises(ValueError, match="one entry per instrument"):
+        create_app(settings, provider=StubProvider())

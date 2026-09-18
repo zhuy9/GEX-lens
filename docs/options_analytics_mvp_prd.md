@@ -2,6 +2,7 @@
 
 Version: 1.1  
 Date: September 16, 2026  
+Amended: September 17, 2026 (post-MVP): the symbol allowlist moved from `settings.json` to `backend/instruments.py`, and the one-to-three symbol cap was removed. Sections 1, 3, 3.1, and 5.1 reflect this.  
 Audience: coding agent  
 Delivery format: local application; React + shadcn/ui frontend; Python backend; DuckDB storage
 
@@ -9,7 +10,7 @@ Delivery format: local application; React + shadcn/ui frontend; Python backend; 
 
 This version replaces v1.0. Keep the numerical methods and two-chart MVP scope. Apply these changes throughout the implementation:
 
-- Use a configuration-driven symbol allowlist, initially `SPY`, `QQQ`, and `AAPL`; load only the selected symbol.
+- Use a code-defined symbol allowlist (`backend/instruments.py`), initially `SPY`, `QQQ`, and `AAPL`; load only the selected symbol.
 - Use React + TypeScript + shadcn/ui + Tailwind CSS for the application UI. Keep Plotly for analytical charts.
 - Require one synchronous `OptionsDataProvider` interface. Nasdaq and synthetic fixtures implement that same interface in separate modules.
 - Obtain the underlying last-trade price from the option-chain response. Do not call a separate quote endpoint.
@@ -55,7 +56,7 @@ Provide `fixture` mode for development using synthetic data. If authorized live 
 | Item | Requirement |
 |---|---|
 | User/runtime | One user, one local machine, desktop browser |
-| Symbol allowlist | Configured in `settings.json`; ship `SPY`, `QQQ`, `AAPL`; default `SPY`; at most three enabled symbols |
+| Symbol allowlist | Every verified instrument in `backend/instruments.py`; ships `SPY`, `QQQ`, `AAPL`; default is the first entry (`SPY`) |
 | Instruments | Standard US equity/ETF options; USD prices |
 | Index/futures support | Excluded; do not relabel SPY/QQQ data as SPX/NDX/NQ options |
 | Expiration scope | Calendar DTE from 1 through 60, inclusive |
@@ -76,9 +77,9 @@ Exclude 0DTE to avoid adding same-day expiration and near-expiry numerical behav
 
 The initial release must validate `SPY`, `QQQ`, and `AAPL`. The allowlist limits the validated product scope; it must not introduce symbol-specific branches into analytics or charts.
 
-Read `symbols` and `default_symbol` from backend configuration. The frontend obtains the exact same ordered list from `GET /api/config`; do not hardcode ticker strings in React. Use a dropdown, not free-text ticker entry. Every dashboard route validates membership before database or provider work.
+The backend derives `symbols` and `default_symbol` from `backend/instruments.py`, in its order; the first entry is the default. `settings.json` has no symbol list. The frontend obtains the exact same ordered list from `GET /api/config`; do not hardcode ticker strings in React. Use a dropdown, not free-text ticker entry. Every dashboard route validates membership before database or provider work.
 
-Configuration accepts one to three distinct uppercase symbols, and the default must be one of them. Changing a symbol requires editing configuration, restarting, and passing the source-contract checks for that symbol; it does not require changing analytics, API models, or chart code. There is no add/remove-ticker UI or symbol-discovery endpoint. Do not add a fourth enabled symbol to this MVP.
+Adding a symbol requires passing the source-contract checks for it, adding its entry to `backend/instruments.py`, adding its `dividend_sources` entry to `settings.json`, and restarting. It does not require changing analytics, API models, or chart code. There is no add/remove-ticker UI or symbol-discovery endpoint.
 
 Keep standard USD equity/ETF options as the only instrument class. Do not implement index, futures-option, adjusted-contract, or cross-instrument conversion logic. SPY/QQQ snapshots must never be labeled as SPX/NDX/NQ snapshots.
 
@@ -248,7 +249,7 @@ These tests are required even if the initial live adapter works. A nominal inter
 
 Read one local `settings.json`, excluded from version control. Commit `settings.example.json` and validate configuration at startup.
 
-Required configuration fields are `source_mode`, `db_path`, `symbols`, `default_symbol`, `refresh_min_interval_seconds`, `risk_free_rate`, and `dividend_yields` containing exactly one value per enabled symbol. Live configuration must explicitly provide both rate inputs; do not retrieve them from another service.
+Required configuration fields are `source_mode`, `db_path`, `refresh_min_interval_seconds`, `risk_free_rate`, and `dividend_yields` containing exactly one value per instrument in `backend/instruments.py`. Live configuration must explicitly provide both rate inputs; do not retrieve them from another service.
 
 Commit this synthetic example; do not represent its rates as current market data:
 
@@ -256,15 +257,13 @@ Commit this synthetic example; do not represent its rates as current market data
 {
   "source_mode": "fixture",
   "db_path": "data/options.fixture.duckdb",
-  "symbols": ["SPY", "QQQ", "AAPL"],
-  "default_symbol": "SPY",
   "refresh_min_interval_seconds": 60,
   "risk_free_rate": 0.04,
   "dividend_yields": {"SPY": 0.0, "QQQ": 0.0, "AAPL": 0.0}
 }
 ```
 
-Validate symbol uniqueness, the one-to-three count, default membership, and exact dividend-yield key coverage at startup. `refresh_min_interval_seconds` must be an integer at least 60; increase it if M0 establishes a stricter permitted refresh interval. No hardcoded frontend ticker list or symbol-specific analytical code is permitted; configured per-symbol dividend yields remain required. The configured source identifies one provider for the entire app, not a separate provider per chart or price field.
+Validate exact per-instrument dividend key coverage at startup. `refresh_min_interval_seconds` must be an integer at least 60; increase it if M0 establishes a stricter permitted refresh interval. No hardcoded frontend ticker list or symbol-specific analytical code is permitted; configured per-symbol dividend yields remain required. The configured source identifies one provider for the entire app, not a separate provider per chart or price field.
 
 Use annual continuously compounded decimal inputs: `0.04` means 4%, not 0.04%. The fixture example uses `r=0.04` and `q=0.00`; these are synthetic model assumptions, not current market observations. Fixture data includes a fixed valuation clock so its expirations do not become unusable as the real date changes. Validate `-0.10 <= r <= 0.50` and `0 <= q <= 0.50`.
 
@@ -485,7 +484,7 @@ Serve the saved `dashboard_json` on GET; do not recalculate its analytical array
 | Method/path | Behavior |
 |---|---|
 | `GET /api/health` | Return `{"status":"ok","schema_version":1}` after a successful database check; no upstream request |
-| `GET /api/config` | Return configured symbols/default, source mode, model inputs, fixed scope, `refresh_mode="manual"`, `refresh_min_interval_seconds`, current `refresh_in_progress`, `server_time`, and nullable `refresh_not_before` |
+| `GET /api/config` | Return enabled symbols/default (from `backend/instruments.py`), source mode, model inputs, fixed scope, `refresh_mode="manual"`, `refresh_min_interval_seconds`, current `refresh_in_progress`, `server_time`, and nullable `refresh_not_before` |
 | `GET /api/dashboard/{symbol}` | Return latest stored dashboard; `404 NO_SNAPSHOT` when absent |
 | `POST /api/dashboard/{symbol}/refresh` | Fetch, calculate, atomically save, and return one new dashboard; empty request body |
 
@@ -618,7 +617,7 @@ Complete milestones in order. M1-M4 may proceed in fixture mode while M0 is bloc
 | M1.5 | Simulated mid-transaction failure leaves no partial snapshot or orphan contract rows. |
 | M1.6 | Saving snapshot 21 leaves exactly 20 for that `(source_mode, symbol)` pair. Another source's and another symbol's snapshots remain unchanged. Latest reads are source-filtered. |
 | M1.7 | All five provider-boundary tests in Section 4.4 pass. A StubProvider reaches both charts' saved API arrays without importing or constructing Nasdaq. |
-| M1.8 | Settings with zero/four symbols, duplicates, an absent default, or missing/extra dividend entries fail startup. React receives its ordered selector options from the backend; no ticker array is hardcoded there. |
+| M1.8 | Settings with missing/extra per-instrument dividend entries, or a leftover `symbols` key, fail startup. React receives its ordered selector options from the backend; no ticker array is hardcoded there. |
 | M1.9 | In a sample-derived adapter fixture, expected `underlying_price` exactly matches the response's underlying field. Give option-row premiums deliberately different values and assert none is used as spot. |
 | M1.10 | Missing, zero, negative, or nonfinite first-page underlying price raises `INVALID_UNDERLYING_PRICE`, preserves old data, and makes zero separate-quote requests. A single-page chain requires one upstream request; N paginated chain pages require N, not N+1. |
 | M1.11 | If later pages repeat changed underlying prices, the snapshot retains the first-page price and adds `UNDERLYING_PRICE_CHANGED_DURING_COLLECTION`. It never reprices different contracts using different page spots. |

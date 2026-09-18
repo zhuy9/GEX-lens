@@ -64,6 +64,9 @@ MAX_STRIKE_PCT = 1.20
 PRICING_TIME_CONVENTION = "16:00 America/New_York on expiration date"
 MODEL_ID = "cash_pv_bsm_v2"
 ALGORITHM_VERSION = "2"
+# Every verified instrument is enabled, in instruments.py order; the first
+# is the default symbol.
+SYMBOLS = tuple(INSTRUMENTS)
 
 logger = logging.getLogger(__name__)
 
@@ -437,6 +440,10 @@ def create_app(
     rate_provider: RateDataProvider | None = None,
     dividend_providers: dict[str, DividendDataProvider | None] | None = None,
 ) -> FastAPI:
+    if set(settings.dividend_sources) != set(SYMBOLS):
+        raise ValueError(
+            f"dividend_sources must have exactly one entry per instrument: {', '.join(SYMBOLS)}"
+        )
     storage.init_schema(settings.db_path)
     provider_is_owned = provider is None
     active_provider = provider if provider is not None else build_provider(settings)
@@ -449,7 +456,7 @@ def create_app(
         dividend_providers
         if dividend_providers is not None
         else {
-            symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in settings.symbols
+            symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in SYMBOLS
         }
     )
     gate = RefreshCoordinator(settings.refresh_min_interval_seconds)
@@ -478,7 +485,7 @@ def create_app(
 
     def _require_symbol(symbol: str) -> str:
         upper = symbol.upper()
-        if upper not in settings.symbols:
+        if upper not in SYMBOLS:
             raise _http_error(422, "UNSUPPORTED_SYMBOL", f"{symbol!r} is not configured")
         return upper
 
@@ -518,8 +525,8 @@ def create_app(
     @app.get("/api/config")
     def get_config() -> dict:
         response = ConfigResponse(
-            symbols=settings.symbols,
-            default_symbol=settings.symbols[0],
+            symbols=SYMBOLS,
+            default_symbol=SYMBOLS[0],
             source_mode=settings.source_mode,
             pricing_model=settings.pricing_model,
             rate_source=settings.rate_source,
@@ -594,6 +601,11 @@ def _load_settings(path: Path | None = None) -> Settings:
                 f"{path} uses the pre-ADR-0001 config schema (risk_free_rate/dividend_yields). "
                 "Migrate to pricing_model/rate_source/dividend_sources/reference_inputs_path -- "
                 "see settings.example.json."
+            ) from exc
+        if "symbols" in raw:
+            raise ValueError(
+                f"{path}: 'symbols' was removed; every instrument in instruments.py is now "
+                "enabled. Delete the key -- see settings.example.json."
             ) from exc
         raise
 

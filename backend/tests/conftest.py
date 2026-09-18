@@ -8,7 +8,6 @@ def make_settings(db_path: str, source_mode: str = "fixture") -> Settings:
     return Settings(
         source_mode=source_mode,
         db_path=db_path,
-        symbols=("SPY", "QQQ", "AAPL"),
         refresh_min_interval_seconds=60,
         pricing_model="cash_pv_bsm_v2",
         rate_source="fixture",

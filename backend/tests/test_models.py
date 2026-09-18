@@ -9,7 +9,6 @@ from models import ChainSnapshot, OptionQuote, Settings
 VALID = dict(
     source_mode="fixture",
     db_path="data/test.duckdb",
-    symbols=("SPY", "QQQ", "AAPL"),
     refresh_min_interval_seconds=60,
     pricing_model="cash_pv_bsm_v2",
     rate_source="fixture",
@@ -20,24 +19,14 @@ VALID = dict(
 
 def test_valid_settings_parses():
     settings = Settings(**VALID)
-    assert settings.symbols[0] == "SPY"  # the default symbol, per app.py's get_config()
+    assert settings.source_mode == "fixture"
 
 
 @pytest.mark.parametrize(
     "override",
     [
-        {"symbols": ()},
-        {"symbols": ("SPY", "SPY")},
-        {"symbols": ("SPY", "QQQ", "AAPL", "MSFT")},
-        {"dividend_sources": {"SPY": "fixture", "QQQ": "fixture"}},
-        {
-            "dividend_sources": {
-                "SPY": "fixture",
-                "QQQ": "fixture",
-                "AAPL": "fixture",
-                "MSFT": "fixture",
-            }
-        },
+        # Enabled symbols now come from instruments.py, not settings.
+        {"symbols": ("SPY",)},
         {"refresh_min_interval_seconds": 59},
     ],
 )

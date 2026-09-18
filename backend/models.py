@@ -437,9 +437,8 @@ class Settings(BaseModel):
     # exercise the real API/DB path under it. See PRD 4.3's provider Protocol.
     source_mode: str
     db_path: str
-    # The first entry is the default symbol -- not a separate field to keep
-    # in sync; every observed config already used symbols[0] for this.
-    symbols: tuple[str, ...]
+    # No symbols list: every instrument in instruments.py is enabled.
+    # app.py checks dividend_sources covers exactly those instruments.
     refresh_min_interval_seconds: int
     # ADR-0001 Section 5.2: replaces the old flat risk_free_rate/
     # dividend_yields. pricing_model/rate_source are plain strings for the
@@ -450,30 +449,12 @@ class Settings(BaseModel):
     dividend_sources: dict[str, str]
     reference_inputs_path: str
 
-    @field_validator("symbols")
-    @classmethod
-    def _validate_symbols(cls, v: tuple[str, ...]) -> tuple[str, ...]:
-        if not (1 <= len(v) <= 3):
-            raise ValueError("symbols must contain 1 to 3 entries")
-        if len(set(v)) != len(v):
-            raise ValueError("symbols must be unique")
-        for s in v:
-            if not s or not s.isupper() or not s.isalpha():
-                raise ValueError(f"symbol {s!r} must be uppercase letters")
-        return v
-
     @field_validator("refresh_min_interval_seconds")
     @classmethod
     def _validate_cooldown(cls, v: int) -> int:
         if v < 60:
             raise ValueError("refresh_min_interval_seconds must be >= 60")
         return v
-
-    @model_validator(mode="after")
-    def _validate_cross_fields(self) -> Settings:
-        if set(self.dividend_sources.keys()) != set(self.symbols):
-            raise ValueError("dividend_sources keys must exactly match symbols")
-        return self
 
 
 class ErrorBody(BaseModel):
