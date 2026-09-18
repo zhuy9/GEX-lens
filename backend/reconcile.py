@@ -444,6 +444,8 @@ def _check_baseline_reproduction(
     surface_iv = surface.iv
     if surface.status != saved_surface["status"]:
         mismatches.append(f"surface: status {surface.status} != saved {saved_surface['status']}")
+    elif [e.isoformat() for e in surface.expirations] != saved_surface["expirations"]:
+        mismatches.append("surface: expirations differ from saved")
     elif surface.status == "READY" and surface_iv is not None:
         for e_idx, row in enumerate(surface_iv):
             for k_idx, iv in enumerate(row):

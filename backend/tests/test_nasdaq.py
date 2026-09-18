@@ -438,6 +438,30 @@ def test_row_with_no_header_and_no_drilldown_url_is_schema_error():
     assert exc_info.value.code == "SCHEMA_ERROR"
 
 
+@pytest.mark.parametrize(
+    ("strike", "yymmdd", "use_url"),
+    [
+        ("--", "260115", False),  # unparseable strike text
+        ("NaN", "260115", False),  # parses as Decimal, but not a real strike
+        ("0.00", "260115", False),  # nonpositive strike
+        ("95.00", "261399", True),  # drillDownURL with an impossible date
+    ],
+)
+def test_malformed_row_identity_is_schema_error_not_a_crash(strike, yymmdd, use_url):
+    row = _data_row("aapl", yymmdd, strike, "00095000")
+    if not use_url:
+        del row["drillDownURL"]
+    rows = [_header_row("January 15, 2026"), row]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc_info.value.code == "SCHEMA_ERROR"
+
+
 def test_missing_drilldown_url_falls_back_to_header_and_strike():
     # A put-side-only row (or any row missing the URL key entirely, not just
     # null) still resolves via the carried header + its own strike field.

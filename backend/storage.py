@@ -89,7 +89,7 @@ def _bulk_insert_option_quotes(
     fd, csv_path = tempfile.mkstemp(suffix=".csv")
     try:
         with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
+            writer = csv.writer(f, lineterminator="\n")
             for pq in priced_quotes:
                 row = _row_dict(snapshot_id, pq)
                 writer.writerow(_csv_cell(row[name]) for name in column_names)

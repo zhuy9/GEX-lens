@@ -141,8 +141,16 @@ def _parse_json_envelope(response: httpx.Response, *, schema_error_code: str, ch
 
 
 def _parse_decimal(raw: object) -> Decimal:
+    # Strike text is untrusted: fail as SCHEMA_ERROR, never a raw
+    # InvalidOperation/ValidationError that surfaces as HTTP 500.
     text = str(raw).strip().replace(",", "").replace("$", "")
-    return Decimal(text)
+    try:
+        value = Decimal(text)
+    except InvalidOperation as exc:
+        raise ProviderError("SCHEMA_ERROR", f"Unparseable strike {raw!r}") from exc
+    if not value.is_finite() or value <= 0:
+        raise ProviderError("SCHEMA_ERROR", f"Invalid strike {raw!r}")
+    return value
 
 
 def _drilldown_expiration_and_strike(url: str) -> tuple[date, Decimal] | None:
@@ -150,7 +158,10 @@ def _drilldown_expiration_and_strike(url: str) -> tuple[date, Decimal] | None:
     if not match:
         return None
     yy, mm, dd, strike_digits = match.groups()
-    expiration = date(2000 + int(yy), int(mm), int(dd))
+    try:
+        expiration = date(2000 + int(yy), int(mm), int(dd))
+    except ValueError as exc:
+        raise ProviderError("SCHEMA_ERROR", f"Invalid date in drillDownURL {url!r}") from exc
     strike = Decimal(strike_digits) / Decimal(1000)
     return expiration, strike
 

@@ -13,6 +13,7 @@ import duckdb
 import reconcile
 import storage
 from analytics import (
+    SURFACE_GRID,
     analyze_snapshot,
     analyze_snapshot_v2,
     bsm_price,
@@ -21,6 +22,7 @@ from analytics import (
 from models import (
     DashboardResponseV1,
     DashboardResponseV2,
+    GexData,
     Instrument,
     OptionQuote,
     Parameters,
@@ -28,6 +30,7 @@ from models import (
     ResolvedDividendSchedule,
     ResolvedRate,
     ScheduleReview,
+    SurfaceData,
 )
 
 VALUATION_AT = datetime(2026, 1, 2, 21, 0, tzinfo=UTC)
@@ -564,6 +567,28 @@ def test_abs_diff_is_reported_even_when_old_is_zero():
     assert reconcile._abs_diff(5.0, 0.0) == 5.0
     assert reconcile._abs_diff(None, 0.0) is None
     assert reconcile._abs_diff(5.0, None) is None
+
+
+def test_ready_surfaces_with_different_expirations_are_a_mismatch_not_a_crash():
+    # Both READY, but the recomputed surface kept one more expiration row than
+    # the saved one: must be reported, not an IndexError before any report.
+    row = (0.2,) * len(SURFACE_GRID)
+    surface = SurfaceData(
+        status="READY",
+        k=SURFACE_GRID,
+        expirations=(date(2026, 1, 9), date(2026, 1, 16), date(2026, 1, 23)),
+        dte=(7.0, 14.0, 21.0),
+        iv=(row, row, row),
+        observations=(),
+    )
+    saved_surface = {"status": "READY", "expirations": ["2026-01-09", "2026-01-16"], "iv": [row, row]}
+    empty_gex = GexData(strikes=(), expirations=(), cells=())
+
+    mismatches = reconcile._check_baseline_reproduction(
+        (), {}, empty_gex, {"expirations": [], "strikes": [], "cells": []}, surface, saved_surface
+    )
+
+    assert mismatches == ["surface: expirations differ from saved"]
 
 
 def test_contracts_csv_reports_both_gex_units_per_contract(tmp_path):

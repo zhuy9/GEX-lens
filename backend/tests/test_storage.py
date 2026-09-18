@@ -132,6 +132,39 @@ def test_option_quote_fields_round_trip_into_their_own_columns(tmp_path):
     )
 
 
+def test_untrusted_string_with_newline_and_quote_round_trips(tmp_path):
+    # provider_contract_id is raw provider text. An embedded newline used to
+    # break DuckDB's CSV parse (CRLF rows + a bare LF inside a quoted field)
+    # and fail the whole save.
+    db_path = str(tmp_path / "test.duckdb")
+    storage.init_schema(db_path)
+    weird = 'a,b"c\nd'
+    pq = make_priced_quote()
+    pq = pq.model_copy(update={"quote": pq.quote.model_copy(update={"provider_contract_id": weird})})
+    snapshot_id = uuid4()
+    now = datetime.now(UTC)
+    storage.save_snapshot(
+        db_path,
+        source_mode="fixture",
+        symbol="SPY",
+        snapshot_id=snapshot_id,
+        collected_at=now,
+        valuation_at=now,
+        raw_payload_json="{}",
+        dashboard_json={"snapshot_id": str(snapshot_id)},
+        priced_quotes=(pq,),
+    )
+
+    conn = duckdb.connect(db_path)
+    try:
+        value = _scalar(
+            conn, "SELECT provider_contract_id FROM option_quotes WHERE snapshot_id = ?", [snapshot_id]
+        )
+    finally:
+        conn.close()
+    assert value == weird
+
+
 def test_schema_creates_and_latest_survives_reconnect(tmp_path):
     # M1.1, M1.4
     db_path = str(tmp_path / "test.duckdb")

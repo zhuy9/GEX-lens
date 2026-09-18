@@ -11,6 +11,10 @@ on:
   pull_request:
     branches: [main]
 
+# Checks only read the repo; don't inherit the default token's write scopes.
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -42,7 +46,9 @@ jobs:
         # tests use for readability. Confirmed by running both ways: `ty
         # check .` reports diagnostics only inside tests/, none in the
         # application code below.
-        run: ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py
+        run: >-
+          ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py
+          market_inputs.py rates.py instruments.py api.py reconcile.py
       - name: Test
         working-directory: backend
         # test_performance.py's timings are hardware-sensitive and reported

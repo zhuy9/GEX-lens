@@ -54,6 +54,14 @@ def _require_aware(v: datetime | None) -> datetime | None:
     return v
 
 
+def _require_rate_cc_bounded(v: float) -> float:
+    # ADR-0001 Section 6.2's application guardrail: an input limit, not a
+    # statement about possible market rates.
+    if not math.isfinite(v) or not (-0.10 <= v <= 0.50):
+        raise ValueError("rate_cc must be finite and within [-0.10, 0.50]")
+    return v
+
+
 class ChainRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -211,11 +219,7 @@ class ResolvedRate(BaseModel):
     @field_validator("rate_cc")
     @classmethod
     def _rate_cc_bounded(cls, v: float) -> float:
-        # Same application guardrail as Settings.risk_free_rate (PRD/ADR 6.2):
-        # an application input limit, not a statement about possible market rates.
-        if not math.isfinite(v) or not (-0.10 <= v <= 0.50):
-            raise ValueError("rate_cc must be finite and within [-0.10, 0.50]")
-        return v
+        return _require_rate_cc_bounded(v)
 
     @field_validator("raw_percent_rate")
     @classmethod
@@ -233,6 +237,13 @@ class ManualRateInput(BaseModel):
     entered_at: datetime
     source_ref: str
     reason: str
+
+    @field_validator("rate_cc")
+    @classmethod
+    def _rate_cc_bounded(cls, v: float) -> float:
+        # Checked here too, so a bad reference_inputs.json fails as
+        # REFERENCE_INPUT_FILE_INVALID, not a 500 from ResolvedRate later.
+        return _require_rate_cc_bounded(v)
 
     @field_validator("entered_at")
     @classmethod

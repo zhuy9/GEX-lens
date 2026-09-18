@@ -730,6 +730,22 @@ def test_load_local_reference_inputs_rejects_a_missing_file(tmp_path):
     assert exc.value.code == "REFERENCE_INPUT_FILE_INVALID"
 
 
+@pytest.mark.parametrize("rate_cc", ["0.6", "-0.2", "NaN"])
+def test_load_local_reference_inputs_rejects_out_of_range_manual_rate(tmp_path, rate_cc):
+    # Section 6.2's [-0.10, 0.50] guardrail must fail at load time with a
+    # clear code, not later as an unhandled ResolvedRate error (HTTP 500).
+    # json.loads accepts a bare NaN, so that case is reachable too.
+    path = tmp_path / "reference_inputs.json"
+    path.write_text(
+        '{"input_schema_version": 1, "schedules": {}, "manual_rate": {'
+        f'"rate_cc": {rate_cc}, "effective_date": "2026-01-02", '
+        '"entered_at": "2026-01-02T12:00:00Z", "source_ref": "local", "reason": "test"}}'
+    )
+    with pytest.raises(ProviderError) as exc:
+        market_inputs.load_local_reference_inputs(path)
+    assert exc.value.code == "REFERENCE_INPUT_FILE_INVALID"
+
+
 # --- M2.7: fixture providers need neither network nor an untracked file ---
 
 
