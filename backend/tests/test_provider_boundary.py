@@ -128,8 +128,12 @@ def test_module_does_not_import_http_libraries(module_name):
     assert "requests" not in names
 
 
-def test_nasdaq_import_in_app_only_occurs_inside_build_provider():
+def test_nasdaq_import_in_app_only_occurs_inside_a_provider_factory():
     tree = ast.parse((BACKEND_DIR / "app.py").read_text(), filename="app.py")
+    # The chain and dividend adapters are two narrow, independent factories
+    # (ADR-0001 4.2); each may lazily import nasdaq for its own concrete
+    # adapter, but nowhere else in app.py.
+    factory_functions = {"build_provider", "build_dividend_provider"}
 
     class Visitor(ast.NodeVisitor):
         def __init__(self) -> None:
@@ -142,7 +146,9 @@ def test_nasdaq_import_in_app_only_occurs_inside_build_provider():
             self.func_stack.pop()
 
         def _check(self, module_name: str, node: ast.Import | ast.ImportFrom) -> None:
-            if module_name == "nasdaq" and (not self.func_stack or self.func_stack[-1] != "build_provider"):
+            if module_name == "nasdaq" and (
+                not self.func_stack or self.func_stack[-1] not in factory_functions
+            ):
                 self.violations.append(node.lineno)
 
         def visit_Import(self, node: ast.Import) -> None:

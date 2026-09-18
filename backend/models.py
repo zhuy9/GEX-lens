@@ -426,8 +426,9 @@ class Settings(BaseModel):
     # exercise the real API/DB path under it. See PRD 4.3's provider Protocol.
     source_mode: str
     db_path: str
+    # The first entry is the default symbol -- not a separate field to keep
+    # in sync; every observed config already used symbols[0] for this.
     symbols: tuple[str, ...]
-    default_symbol: str
     refresh_min_interval_seconds: int
     # ADR-0001 Section 5.2: replaces the old flat risk_free_rate/
     # dividend_yields. pricing_model/rate_source are plain strings for the
@@ -459,8 +460,6 @@ class Settings(BaseModel):
 
     @model_validator(mode="after")
     def _validate_cross_fields(self) -> Settings:
-        if self.default_symbol not in self.symbols:
-            raise ValueError("default_symbol must be one of symbols")
         if set(self.dividend_sources.keys()) != set(self.symbols):
             raise ValueError("dividend_sources keys must exactly match symbols")
         return self

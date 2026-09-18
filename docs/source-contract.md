@@ -54,8 +54,14 @@ No auth header was used to obtain any sample. Verification date: 2026-09-16.
 - Path: `data.lastTrade`
 - Type: a free-text string, **not** a numeric field:
   `"LAST TRADE: $332.41 (AS OF SEP 16, 2026)"`
-- Parse with e.g. `^LAST TRADE: \$([\d,]+\.\d+) \(AS OF (.+)\)$` to get
+- Parse with e.g. `^LAST TRADE: \$([\d,]+(?:\.\d+)?) \(AS OF (.+)\)$` to get
   `price = "332.41"`, `date_text = "SEP 16, 2026"`.
+- **Update 2026-09-17 (ADR-0001 M6.4 live verification):** a whole-dollar
+  price omits the decimal entirely -- confirmed live, AAPL traded at exactly
+  `"LAST TRADE: $337 (AS OF SEP 17, 2026)"`, no `.00`. The original regex
+  above required a decimal point and rejected this live response as
+  `INVALID_UNDERLYING_PRICE`; the fractional part is optional, not always
+  present (fixed in `nasdaq.py::_LAST_TRADE_RE`).
 - The `(AS OF ...)` suffix is a **calendar date only, no time-of-day**. Per
   PRD Section 4.2, a date-only source value must not be converted into an
   invented midnight timestamp, so `spot_asof` must stay `null` for this

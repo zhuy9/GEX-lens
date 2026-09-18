@@ -2,6 +2,8 @@
 .env*
 !.env.example
 settings.json
+reference_inputs.json
+reference_inputs.scenario.json
 
 # Raw provider samples (Nasdaq ToS-restricted; never redistribute)
 docs/samples/

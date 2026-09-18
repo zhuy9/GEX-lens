@@ -2,7 +2,6 @@
   "source_mode": "fixture",
   "db_path": "data/options.fixture.duckdb",
   "symbols": ["SPY", "QQQ", "AAPL"],
-  "default_symbol": "SPY",
   "refresh_min_interval_seconds": 60,
   "pricing_model": "cash_pv_bsm_v2",
   "rate_source": "fixture",

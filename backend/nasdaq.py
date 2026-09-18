@@ -1,37 +1,47 @@
-"""NasdaqProvider: HTTP, pagination, Nasdaq-to-canonical parsing.
+"""NasdaqProvider/NasdaqDividendProvider: HTTP, pagination, Nasdaq-to-canonical
+parsing. Neither adapter calls the other's fetch method (ADR-0001 4.2).
 
-Field paths and pagination behavior here follow docs/source-contract.md,
-verified against real samples. Do not change parsing assumptions without
-updating that document first.
+Field paths and pagination behavior here follow docs/source-contract.md and
+docs/dividend-source-contract.md, verified against real samples. Do not
+change parsing assumptions without updating those documents first.
 """
 
 import math
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import httpx
 
-from models import ChainRequest, ChainSnapshot, OptionQuote, ny_local_date
+from instruments import INSTRUMENTS
+from models import (
+    ChainRequest,
+    ChainSnapshot,
+    DividendFeedSnapshot,
+    DividendRecord,
+    OptionQuote,
+    ny_local_date,
+)
 from provider import ProviderError
 
 BASE_URL = "https://api.nasdaq.com/api/quote/{symbol}/option-chain"
-
-# The only three symbols verified in docs/source-contract.md (M0). Adding a
-# symbol here requires re-running M0 verification for it first.
-ASSET_CLASS = {"SPY": "etf", "QQQ": "etf", "AAPL": "stocks"}
+DIVIDENDS_URL = "https://api.nasdaq.com/api/quote/{symbol}/dividends"
 
 PAGE_LIMIT = 1000
 MAX_REQUESTS = 10
 MAX_RESPONSE_BYTES = 10 * 1024 * 1024
+MAX_REFERENCE_RESPONSE_BYTES = 2 * 1024 * 1024  # Section 8.3's reference-response cap
 MAX_CONTRACTS = 10_000
 COLLECTION_WINDOW_SECONDS = 30
 CONNECT_TIMEOUT_SECONDS = 5.0
 RW_POOL_TIMEOUT_SECONDS = 10.0
 
 _HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-_LAST_TRADE_RE = re.compile(r"^LAST TRADE:\s*\$([\d,]+\.\d+)\s*\(AS OF (.+)\)$")
+# Confirmed live 2026-09-17: a whole-dollar price (e.g. AAPL at exactly
+# "$337") omits the decimal entirely -- the fractional part is optional,
+# not always present.
+_LAST_TRADE_RE = re.compile(r"^LAST TRADE:\s*\$([\d,]+(?:\.\d+)?)\s*\(AS OF (.+)\)$")
 _HEADER_DATE_FMT = "%B %d, %Y"
 # aapl--260916c00245000 -> YY MM DD, C/P, strike*1000 zero-padded to 8 digits.
 # Only ever seen on the call side (docs/source-contract.md).
@@ -92,6 +102,42 @@ def _parse_retry_after(raw: str | None) -> int | None:
     if not math.isfinite(value) or value < 0:
         return None
     return int(value)
+
+
+def _http_get(client: httpx.Client, url: str, params: dict) -> httpx.Response:
+    """Shared by both Nasdaq adapters (ADR-0001 4.2: they may share a small
+    HTTP helper; neither calls the other's fetch method)."""
+    try:
+        return client.get(url, params=params)
+    except httpx.TimeoutException as exc:
+        raise ProviderError("UPSTREAM_TIMEOUT", str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise ProviderError("UPSTREAM_UNAVAILABLE", str(exc)) from exc
+
+
+def _parse_json_envelope(response: httpx.Response, *, schema_error_code: str, check_403: bool) -> dict:
+    """Shared status/JSON/rCode validation. Byte-size limits differ between
+    the two adapters (chain: cumulative across pages; dividends: one
+    response) and stay each caller's own concern, checked before this."""
+    if response.status_code == 429:
+        retry_after = _parse_retry_after(response.headers.get("Retry-After"))
+        raise ProviderError("UPSTREAM_RATE_LIMITED", "Nasdaq rate limit", retry_after_seconds=retry_after)
+    if check_403 and response.status_code == 403:
+        raise ProviderError("UPSTREAM_ACCESS_DENIED", "Nasdaq access denied (403)")
+    if response.status_code != 200:
+        raise ProviderError("UPSTREAM_UNAVAILABLE", f"Unexpected status {response.status_code}")
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise ProviderError(schema_error_code, f"Malformed JSON: {exc}") from exc
+    if not isinstance(body, dict):
+        raise ProviderError(schema_error_code, "Response body is not a JSON object")
+    status = body.get("status") or {}
+    if status.get("rCode") != 200:
+        raise ProviderError(
+            "UPSTREAM_UNAVAILABLE", f"Nasdaq rCode={status.get('rCode')}: {status.get('bCodeMessage')}"
+        )
+    return body
 
 
 def _parse_decimal(raw: object) -> Decimal:
@@ -178,9 +224,10 @@ class NasdaqProvider:
 
     def fetch_chain(self, request: ChainRequest) -> ChainSnapshot:
         symbol = request.symbol
-        asset_class = ASSET_CLASS.get(symbol)
-        if asset_class is None:
+        instrument = INSTRUMENTS.get(symbol)
+        if instrument is None:
             raise ProviderError("UNSUPPORTED_SYMBOL", f"No Nasdaq asset-class mapping for {symbol!r}")
+        asset_class = instrument.chain_asset_class
 
         collection_started_at = datetime.now(UTC)
         today = ny_local_date(collection_started_at)
@@ -357,33 +404,10 @@ class NasdaqProvider:
         )
 
     def _get(self, symbol: str, params: dict) -> httpx.Response:
-        try:
-            return self._client.get(BASE_URL.format(symbol=symbol), params=params)
-        except httpx.TimeoutException as exc:
-            raise ProviderError("UPSTREAM_TIMEOUT", str(exc)) from exc
-        except httpx.HTTPError as exc:
-            raise ProviderError("UPSTREAM_UNAVAILABLE", str(exc)) from exc
+        return _http_get(self._client, BASE_URL.format(symbol=symbol), params)
 
     def _parse_body(self, response: httpx.Response) -> dict:
-        if response.status_code == 429:
-            retry_after = _parse_retry_after(response.headers.get("Retry-After"))
-            raise ProviderError("UPSTREAM_RATE_LIMITED", "Nasdaq rate limit", retry_after_seconds=retry_after)
-        if response.status_code == 403:
-            raise ProviderError("UPSTREAM_ACCESS_DENIED", "Nasdaq access denied (403)")
-        if response.status_code != 200:
-            raise ProviderError("UPSTREAM_UNAVAILABLE", f"Unexpected status {response.status_code}")
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise ProviderError("SCHEMA_ERROR", f"Malformed JSON: {exc}") from exc
-        if not isinstance(body, dict):
-            raise ProviderError("SCHEMA_ERROR", "Response body is not a JSON object")
-        status = body.get("status") or {}
-        if status.get("rCode") != 200:
-            raise ProviderError(
-                "UPSTREAM_UNAVAILABLE", f"Nasdaq rCode={status.get('rCode')}: {status.get('bCodeMessage')}"
-            )
-        return body
+        return _parse_json_envelope(response, schema_error_code="SCHEMA_ERROR", check_403=True)
 
     def _parse_chain_asof(self, raw: str | None) -> datetime | None:
         """PRD 6.1: only accept a value that is unambiguously a
@@ -408,3 +432,96 @@ class NasdaqProvider:
         import json
 
         return json.dumps({"request_params": params, "pages": pages})
+
+
+def _parse_mdy_date(raw: str) -> date | None:
+    """MM/DD/YYYY, or None for the "N/A" missing-value sentinel confirmed
+    live for declarationDate/paymentDate (docs/dividend-source-contract.md).
+    A recognized missing sentinel is not a synthesized value (Section 7.2)."""
+    if raw == "N/A":
+        return None
+    try:
+        return datetime.strptime(raw, "%m/%d/%Y").date()
+    except ValueError as exc:
+        raise ProviderError("DIVIDEND_SCHEMA_ERROR", f"Unparseable date {raw!r}") from exc
+
+
+def _parse_dividend_amount(raw: str) -> Decimal:
+    try:
+        return Decimal(raw.strip().lstrip("$"))
+    except InvalidOperation as exc:
+        raise ProviderError("DIVIDEND_SCHEMA_ERROR", f"Unparseable amount {raw!r}") from exc
+
+
+class NasdaqDividendProvider:
+    """Verified for AAPL/QQQ only (docs/dividend-source-contract.md). SPY's
+    dividend-history feature explicitly does not cover non-Nasdaq-listed
+    symbols and must stay on manual_schedule -- not requested here at all."""
+
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        self._client = client or httpx.Client(
+            timeout=httpx.Timeout(RW_POOL_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
+            headers=_HEADERS,
+        )
+
+    def close(self) -> None:
+        self._client.close()
+
+    def fetch_dividends(self, symbol: str) -> DividendFeedSnapshot:
+        instrument = INSTRUMENTS.get(symbol)
+        asset_class = instrument.dividend_asset_class if instrument else None
+        if asset_class is None:
+            raise ProviderError("UNSUPPORTED_SYMBOL", f"No Nasdaq dividend coverage for {symbol!r}")
+
+        response = _http_get(self._client, DIVIDENDS_URL.format(symbol=symbol), {"assetclass": asset_class})
+        if len(response.content) > MAX_REFERENCE_RESPONSE_BYTES:
+            raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Response exceeded the 2 MiB reference cap")
+        body = _parse_json_envelope(response, schema_error_code="DIVIDEND_SCHEMA_ERROR", check_403=False)
+
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Response missing 'data' object")
+        dividends = data.get("dividends")
+        if not isinstance(dividends, dict):
+            raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Response missing 'data.dividends' object")
+        rows = dividends.get("rows")
+        if rows is None:
+            # Confirmed live shape for a symbol this feature does not cover:
+            # a "successful" rCode=200 envelope with a null payload and a
+            # human-readable message, not an error status (Section 7.2: not
+            # a successful empty response).
+            raise ProviderError(
+                "DIVIDEND_COVERAGE_UNVERIFIED",
+                f"Nasdaq has no dividend-history coverage for {symbol!r}: {body.get('message')}",
+            )
+        if not isinstance(rows, list):
+            raise ProviderError("DIVIDEND_SCHEMA_ERROR", "'data.dividends.rows' is not a list")
+
+        records = []
+        for row in rows:
+            ex_date = _parse_mdy_date(row.get("exOrEffDate", ""))
+            if ex_date is None:
+                raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Row missing exOrEffDate")
+            records.append(
+                DividendRecord(
+                    provider_record_id=None,
+                    symbol=symbol,
+                    currency=row.get("currency") or "USD",
+                    ex_date=ex_date,
+                    payment_date=_parse_mdy_date(row.get("paymentDate", "N/A")),
+                    declaration_date=_parse_mdy_date(row.get("declarationDate", "N/A")),
+                    amount=_parse_dividend_amount(row["amount"]),
+                    kind="ordinary_cash" if row.get("type") == "Cash" else "other",
+                    source_ref=DIVIDENDS_URL.format(symbol=symbol),
+                )
+            )
+
+        return DividendFeedSnapshot(
+            provider_id="nasdaq_dividends",
+            symbol=symbol,
+            fetched_at=datetime.now(UTC),
+            source_asof=None,  # confirmed always null live (docs/dividend-source-contract.md)
+            records=tuple(records),
+            raw_payload_json=response.text,
+            warnings=(),
+        )

@@ -129,9 +129,7 @@ def test_unusable_chain_asof_falls_back_without_crashing(as_of):
     rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, as_of=as_of)
-        )
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, as_of=as_of))
 
     provider = make_provider(handler)
     snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
@@ -143,9 +141,7 @@ def test_aware_chain_asof_is_accepted_and_normalized_to_utc():
     as_of = "2026-01-15T16:00:00-05:00"  # aware, non-UTC
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, as_of=as_of)
-        )
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows, as_of=as_of))
 
     provider = make_provider(handler)
     snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
@@ -168,6 +164,20 @@ def test_spot_price_is_never_confused_with_a_premium():
     provider = make_provider(handler)
     snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
     assert snapshot.underlying_price == 100.0  # not 332.41, despite identical-looking premiums
+
+
+def test_whole_dollar_spot_price_with_no_decimal_is_parsed():
+    # Confirmed live 2026-09-17: AAPL traded at exactly $337, and the source
+    # omits the decimal entirely for a whole-dollar price ("$337", not
+    # "$337.00") -- must not be treated as an invalid/unparseable spot.
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $337 (AS OF SEP 17, 2026)", rows))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert snapshot.underlying_price == 337.0
 
 
 @pytest.mark.parametrize("bad_last_trade", [None, "", "garbage", "LAST TRADE: (AS OF JAN 15, 2026)"])
@@ -577,3 +587,157 @@ def test_unsupported_symbol_rejected_without_http():
         provider.fetch_chain(ChainRequest(symbol="MSFT", min_calendar_dte=1, max_calendar_dte=60))
     assert exc_info.value.code == "UNSUPPORTED_SYMBOL"
     assert calls == []
+
+
+# --- NasdaqDividendProvider (docs/dividend-source-contract.md) -------------
+
+
+def make_dividend_provider(handler) -> nasdaq.NasdaqDividendProvider:
+    transport = httpx.MockTransport(handler)
+    return nasdaq.NasdaqDividendProvider(client=httpx.Client(transport=transport))
+
+
+def _dividend_row(ex="08/10/2026", amount="$0.27", pay="08/13/2026", decl="07/30/2026", type_="Cash"):
+    return {
+        "exOrEffDate": ex,
+        "type": type_,
+        "amount": amount,
+        "declarationDate": decl,
+        "recordDate": ex,
+        "paymentDate": pay,
+        "currency": "USD",
+    }
+
+
+def _dividend_body(rows, message=None, rcode=200):
+    return {
+        "data": {
+            "dividendHeaderValues": [],
+            "dividends": {"asOf": None, "headers": {}, "rows": rows},
+        },
+        "message": message,
+        "status": {"rCode": rcode, "bCodeMessage": None, "developerMessage": None},
+    }
+
+
+def test_dividend_provider_parses_a_real_shaped_response():
+    rows = [
+        _dividend_row(),
+        _dividend_row(ex="05/11/2026", amount="$0.27", pay="05/14/2026", decl="04/30/2026"),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["assetclass"] == "stocks"
+        return httpx.Response(200, json=_dividend_body(rows))
+
+    provider = make_dividend_provider(handler)
+    feed = provider.fetch_dividends("AAPL")
+    assert feed.provider_id == "nasdaq_dividends"
+    assert len(feed.records) == 2
+    first = feed.records[0]
+    assert first.ex_date == date(2026, 8, 10)
+    assert first.payment_date == date(2026, 8, 13)
+    assert first.declaration_date == date(2026, 7, 30)
+    assert first.amount == Decimal("0.27")
+    assert first.kind == "ordinary_cash"
+    assert first.currency == "USD"
+
+
+def test_dividend_provider_uses_the_verified_etf_assetclass_for_qqq():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["assetclass"] == "etf"
+        return httpx.Response(200, json=_dividend_body([_dividend_row(amount="$0.81349")]))
+
+    provider = make_dividend_provider(handler)
+    feed = provider.fetch_dividends("QQQ")
+    assert feed.records[0].amount == Decimal("0.81349")
+
+
+def test_spy_is_rejected_without_an_http_call_not_guessed_at():
+    # Confirmed live 2026-09-17 (docs/dividend-source-contract.md): SPY has
+    # no Nasdaq dividend-history coverage at all. Its INSTRUMENTS entry has
+    # dividend_asset_class=None, so this must fail before any request, the
+    # same as an unmapped chain symbol.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("must not make an HTTP call for a known-unsupported symbol")
+
+    provider = make_dividend_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_dividends("SPY")
+    assert exc_info.value.code == "UNSUPPORTED_SYMBOL"
+
+
+def test_null_rows_with_200_status_is_coverage_unverified_not_empty_success():
+    # Confirmed live shape when a real request IS made for an unsupported
+    # symbol: rCode=200 with a null rows payload and a human message --
+    # never a valid empty schedule (Section 7.2).
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_dividend_body(None, message="Dividend History for Non-Nasdaq symbols is not available"),
+        )
+
+    provider = make_dividend_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_dividends("AAPL")
+    assert exc_info.value.code == "DIVIDEND_COVERAGE_UNVERIFIED"
+
+
+def test_na_sentinel_becomes_null_not_a_synthesized_date():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_dividend_body([_dividend_row(pay="N/A", decl="N/A")]))
+
+    provider = make_dividend_provider(handler)
+    feed = provider.fetch_dividends("AAPL")
+    assert feed.records[0].payment_date is None
+    assert feed.records[0].declaration_date is None
+
+
+def test_non_cash_type_maps_to_other_not_ordinary_cash():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_dividend_body([_dividend_row(type_="Stock")]))
+
+    provider = make_dividend_provider(handler)
+    feed = provider.fetch_dividends("AAPL")
+    assert feed.records[0].kind == "other"
+
+
+def test_dividend_amount_with_more_than_two_decimal_places_is_preserved():
+    # Confirmed live: QQQ amounts have 4-5 decimal places, not always 2.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_dividend_body([_dividend_row(amount="$0.73282")]))
+
+    provider = make_dividend_provider(handler)
+    feed = provider.fetch_dividends("QQQ")
+    assert feed.records[0].amount == Decimal("0.73282")
+
+
+def test_dividend_malformed_amount_is_schema_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_dividend_body([_dividend_row(amount="not-a-number")]))
+
+    provider = make_dividend_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_dividends("AAPL")
+    assert exc_info.value.code == "DIVIDEND_SCHEMA_ERROR"
+
+
+def test_dividend_429_raises_upstream_rate_limited():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "60"}, json={})
+
+    provider = make_dividend_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_dividends("AAPL")
+    assert exc_info.value.code == "UPSTREAM_RATE_LIMITED"
+    assert exc_info.value.retry_after_seconds == 60
+
+
+def test_dividend_malformed_json_is_schema_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not json{{{")
+
+    provider = make_dividend_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_dividends("AAPL")
+    assert exc_info.value.code == "DIVIDEND_SCHEMA_ERROR"

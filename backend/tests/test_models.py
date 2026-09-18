@@ -10,7 +10,6 @@ VALID = dict(
     source_mode="fixture",
     db_path="data/test.duckdb",
     symbols=("SPY", "QQQ", "AAPL"),
-    default_symbol="SPY",
     refresh_min_interval_seconds=60,
     pricing_model="cash_pv_bsm_v2",
     rate_source="fixture",
@@ -21,7 +20,7 @@ VALID = dict(
 
 def test_valid_settings_parses():
     settings = Settings(**VALID)
-    assert settings.default_symbol == "SPY"
+    assert settings.symbols[0] == "SPY"  # the default symbol, per app.py's get_config()
 
 
 @pytest.mark.parametrize(
@@ -30,7 +29,6 @@ def test_valid_settings_parses():
         {"symbols": ()},
         {"symbols": ("SPY", "SPY")},
         {"symbols": ("SPY", "QQQ", "AAPL", "MSFT")},
-        {"default_symbol": "MSFT"},
         {"dividend_sources": {"SPY": "fixture", "QQQ": "fixture"}},
         {
             "dividend_sources": {

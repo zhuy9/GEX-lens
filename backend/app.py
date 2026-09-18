@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 import storage
 from analytics import analyze_snapshot_v2, build_expiry_pricing_context
+from instruments import INSTRUMENTS
 from market_inputs import (
     canonical_json,
     load_local_reference_inputs,
@@ -50,10 +51,6 @@ MAX_STRIKE_PCT = 1.20
 PRICING_TIME_CONVENTION = "16:00 America/New_York on expiration date"
 MODEL_ID = "cash_pv_bsm_v2"
 ALGORITHM_VERSION = "2"
-
-# The initial three-symbol allowlist (PRD section 1); a new symbol needs its
-# own M0 instrument-identity verification before it belongs here.
-INSTRUMENT_CLASS = {"SPY": "etf", "QQQ": "etf", "AAPL": "equity"}
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +91,10 @@ def build_rate_provider(rate_source: str) -> RateDataProvider | None:
 
 def build_dividend_provider(dividend_source: str) -> DividendDataProvider | None:
     """None means resolve_dividend_schedule(dividend_source="manual_schedule", ...)
-    makes zero calls. "nasdaq_dividends" is deliberately unimplemented: ADR-0001
-    Section 7.1 requires its field mapping to be verified against a real
-    authorized response (M0) before any raw field is guessed at."""
+    makes zero calls. "nasdaq_dividends" is verified only for AAPL/QQQ (M0;
+    see docs/dividend-source-contract.md) -- NasdaqDividendProvider itself
+    rejects any other symbol with UNSUPPORTED_SYMBOL, since SPY's dividend
+    history is confirmed unavailable from this source, not merely unverified."""
     if dividend_source == "manual_schedule":
         return None
     if dividend_source == "fixture":
@@ -104,10 +102,9 @@ def build_dividend_provider(dividend_source: str) -> DividendDataProvider | None
 
         return FixtureDividendProvider()
     if dividend_source == "nasdaq_dividends":
-        raise ValueError(
-            "dividend_source 'nasdaq_dividends' is blocked pending ADR-0001 M0 verification "
-            "(see docs/dividend-source-contract.md)"
-        )
+        from nasdaq import NasdaqDividendProvider
+
+        return NasdaqDividendProvider()
     raise ValueError(f"Unknown dividend_source: {dividend_source!r}")
 
 
@@ -365,7 +362,7 @@ def _collect_and_save(
         spot=snapshot.underlying_price,
         spot_kind=snapshot.underlying_price_kind,
         spot_origin=snapshot.underlying_price_origin,
-        instrument=Instrument(symbol=symbol, instrument_class=INSTRUMENT_CLASS[symbol]),
+        instrument=Instrument(symbol=symbol, instrument_class=INSTRUMENTS[symbol].instrument_class),
         parameters=ParametersV2(
             r=resolved_rate.rate_cc,
             q=0.0,
@@ -476,7 +473,7 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
     def get_config() -> dict:
         response = ConfigResponse(
             symbols=settings.symbols,
-            default_symbol=settings.default_symbol,
+            default_symbol=settings.symbols[0],
             source_mode=settings.source_mode,
             pricing_model=settings.pricing_model,
             rate_source=settings.rate_source,
