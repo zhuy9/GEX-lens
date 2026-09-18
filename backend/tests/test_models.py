@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from models import ChainSnapshot, ExpectedDividend, OptionQuote, ScheduleReview, Settings
+from models import ChainSnapshot, DividendRecord, ExpectedDividend, OptionQuote, ScheduleReview, Settings
 
 VALID = dict(
     source_mode="fixture",
@@ -161,3 +161,36 @@ def test_unique_in_coverage_events_are_accepted():
         **_review_kwargs(expected_events=(_expected("e1", "2026-02-05"), _expected("e2", "2026-03-05")))
     )
     assert len(review.expected_events) == 2
+
+
+# A payment date before its own ex-date must fail as early as possible --
+# ResolvedDividend already enforced this, but ExpectedDividend (reviewed
+# local config) and DividendRecord (raw provider data) did not, so a bad
+# value could reach deep into resolution before failing there instead.
+
+
+def test_expected_dividend_rejects_payment_before_ex_date():
+    with pytest.raises(ValidationError):
+        ExpectedDividend(
+            event_id="e1",
+            ex_date=date(2026, 2, 5),
+            payment_date=date(2026, 1, 30),
+            amount=Decimal("1.00"),
+            amount_status="declared",
+            source_ref="test",
+        )
+
+
+def test_dividend_record_rejects_payment_before_ex_date():
+    with pytest.raises(ValidationError):
+        DividendRecord(
+            provider_record_id=None,
+            symbol="AAPL",
+            currency="USD",
+            ex_date=date(2026, 2, 5),
+            payment_date=date(2026, 1, 30),
+            declaration_date=None,
+            amount=Decimal("1.00"),
+            kind="ordinary_cash",
+            source_ref="test",
+        )

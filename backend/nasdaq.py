@@ -13,6 +13,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import httpx
+from pydantic import ValidationError
 
 from api import (
     CHAIN_COLLECTION_WINDOW_SECONDS,
@@ -533,8 +534,8 @@ class NasdaqDividendProvider:
             raw_amount = row.get("amount")
             if raw_amount is None:
                 raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Row missing amount")
-            records.append(
-                DividendRecord(
+            try:
+                record = DividendRecord(
                     provider_record_id=None,
                     symbol=symbol,
                     currency=row.get("currency") or "USD",
@@ -545,7 +546,11 @@ class NasdaqDividendProvider:
                     kind="ordinary_cash" if row.get("type") == "Cash" else "other",
                     source_ref=NASDAQ_DIVIDENDS_URL.format(symbol=symbol),
                 )
-            )
+            except ValidationError as exc:
+                # e.g. a payment date before the ex-date: untrusted upstream
+                # data, never a raw 500 from a model invariant.
+                raise ProviderError("DIVIDEND_SCHEMA_ERROR", f"Invalid dividend row: {exc}") from exc
+            records.append(record)
 
         return DividendFeedSnapshot(
             provider_id="nasdaq_dividends",

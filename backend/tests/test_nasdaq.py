@@ -785,6 +785,19 @@ def test_dividend_missing_amount_is_schema_error_not_a_crash():
     assert exc_info.value.code == "DIVIDEND_SCHEMA_ERROR"
 
 
+def test_dividend_payment_date_before_ex_date_is_schema_error_not_a_crash():
+    # Untrusted upstream data: an inverted payment/ex date must fail as a
+    # clean provider error, not a raw pydantic ValidationError surfacing as
+    # an unhandled 500.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_dividend_body([_dividend_row(ex="08/10/2026", pay="08/01/2026")]))
+
+    provider = make_dividend_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_dividends("AAPL")
+    assert exc_info.value.code == "DIVIDEND_SCHEMA_ERROR"
+
+
 def test_dividend_429_raises_upstream_rate_limited():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "60"}, json={})

@@ -272,6 +272,15 @@ class DividendRecord(BaseModel):
             raise ValueError("amount must be null or positive")
         return v
 
+    @model_validator(mode="after")
+    def _payment_not_before_ex(self) -> DividendRecord:
+        # Same invariant as ResolvedDividend, enforced at this earlier
+        # boundary too: bad upstream data must fail as a provider/schema
+        # error here, not surface deep inside resolution.
+        if self.payment_date is not None and self.payment_date < self.ex_date:
+            raise ValueError("payment_date cannot precede ex_date")
+        return self
+
 
 class DividendFeedSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -313,6 +322,16 @@ class ExpectedDividend(BaseModel):
             raise ValueError("pending_source events cannot carry an amount")
         if self.amount_status != "pending_source" and self.amount is None:
             raise ValueError("declared/estimated events require an amount")
+        return self
+
+    @model_validator(mode="after")
+    def _payment_not_before_ex(self) -> ExpectedDividend:
+        # Same invariant as ResolvedDividend, enforced at this earlier
+        # boundary too: bad local config must fail as
+        # REFERENCE_INPUT_FILE_INVALID here, not surface deep inside
+        # resolution.
+        if self.payment_date is not None and self.payment_date < self.ex_date:
+            raise ValueError("payment_date cannot precede ex_date")
         return self
 
 
