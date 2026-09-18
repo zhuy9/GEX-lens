@@ -143,10 +143,10 @@ export function PricingInputsPanel({
 					</details>
 				)}
 
-				{/* Model/dividend warnings render once, at the top of the
-				Snapshot card (SnapshotMeta): app.py already merges these same
-				codes into dashboard.warnings, so a second copy here would
-				show every code twice. */}
+				{/* The full per-warning Alert list renders once, at the top of the
+				Snapshot card (SnapshotMeta); the GEX heatmap and IV surface cards
+				each carry a compact PanelWarnings badge instead of repeating the
+				whole list a third and fourth time. */}
 
 				<Button
 					variant="outline"

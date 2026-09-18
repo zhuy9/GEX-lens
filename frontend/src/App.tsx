@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { ChartErrorBoundary } from "@/components/ChartErrorBoundary";
 import { GexHeatmap } from "@/components/GexHeatmap";
 import { PricingInputsPanel } from "@/components/PricingInputsPanel";
-import { SnapshotMeta } from "@/components/SnapshotMeta";
+import { PanelWarnings, SnapshotMeta } from "@/components/SnapshotMeta";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -246,11 +246,23 @@ export default function App() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle>
-								{dashboard.symbol} GEX Heatmap{" "}
-								<span className="font-normal text-muted-foreground">
-									· 0DTE excluded
+							<CardTitle className="flex flex-wrap items-center gap-2">
+								<span>
+									{dashboard.symbol} GEX Heatmap{" "}
+									<span className="font-normal text-muted-foreground">
+										·{" "}
+										{dashboard.schema_version === 2
+											? `${dashboard.instrument.instrument_class} · `
+											: ""}
+										0DTE excluded
+									</span>
 								</span>
+								{dashboard.schema_version === 2 && (
+									<Badge variant="secondary">
+										{dashboard.parameters.model_id}
+									</Badge>
+								)}
+								<PanelWarnings warnings={dashboard.warnings} />
 							</CardTitle>
 						</CardHeader>
 						<CardContent>
@@ -268,11 +280,23 @@ export default function App() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle>
-								{dashboard.symbol} Implied Volatility Surface{" "}
-								<span className="font-normal text-muted-foreground">
-									· 0DTE excluded
+							<CardTitle className="flex flex-wrap items-center gap-2">
+								<span>
+									{dashboard.symbol} Implied Volatility Surface{" "}
+									<span className="font-normal text-muted-foreground">
+										·{" "}
+										{dashboard.schema_version === 2
+											? `${dashboard.instrument.instrument_class} · `
+											: ""}
+										0DTE excluded
+									</span>
 								</span>
+								{dashboard.schema_version === 2 && (
+									<Badge variant="secondary">
+										{dashboard.parameters.model_id}
+									</Badge>
+								)}
+								<PanelWarnings warnings={dashboard.warnings} />
 							</CardTitle>
 						</CardHeader>
 						<CardContent className="h-96">

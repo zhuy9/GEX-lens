@@ -7,6 +7,7 @@ import {
 	jsonResponse,
 	makeConfig,
 	makeDashboard,
+	makeDashboardV2,
 } from "./test-fixtures";
 
 const { plotRenderCount } = vi.hoisted(() => ({ plotRenderCount: vi.fn() }));
@@ -52,6 +53,28 @@ describe("initial load", () => {
 		render(<App />);
 		await screen.findByText("Snapshot");
 		expect(postCallCount(fetchMock)).toBe(0);
+	});
+
+	it("shows instrument class, model id, and a warnings badge on both analytical panels for a v2 snapshot", async () => {
+		const dashboard = makeDashboardV2({ warnings: ["NEAR_EX_DIVIDEND"] });
+		installFetchMock({
+			config: makeConfig(),
+			dashboards: { SPY: dashboard },
+		});
+		const { container } = render(<App />);
+		await screen.findByText("Snapshot");
+
+		// Section 10/13: instrument class and model id shown on both the
+		// heatmap and surface panels, not just once somewhere on the page.
+		expect(container.textContent?.split("etf").length).toBeGreaterThanOrEqual(
+			3,
+		);
+		expect(
+			container.textContent?.split("cash_pv_bsm_v2").length,
+		).toBeGreaterThanOrEqual(3);
+		// Section 13: warnings shown on both analytical panels via a compact
+		// badge (its title attribute carries the full warning text).
+		expect(screen.getAllByTitle(/next 7 days/i)).toHaveLength(2);
 	});
 });
 

@@ -39,6 +39,20 @@ export function formatTimestamp(value: string | null): string {
 	return new Date(value).toLocaleString();
 }
 
+/** Section 13: "Show the model and near-ex-date/timestamp warnings for both
+ * analytical panels" -- a compact badge for the GEX heatmap/IV surface card
+ * headers, distinct from SnapshotMeta's full per-warning Alert list above
+ * (repeating that whole list on every panel would show each code 3x over). */
+export function PanelWarnings({ warnings }: { warnings: string[] }) {
+	if (warnings.length === 0) return null;
+	const title = warnings.map((code) => WARNING_TEXT[code] ?? code).join("\n");
+	return (
+		<Badge variant="outline" title={title}>
+			{warnings.length} warning{warnings.length === 1 ? "" : "s"}
+		</Badge>
+	);
+}
+
 export function SnapshotMeta({ dashboard, offsetMs, tick }: SnapshotMetaProps) {
 	void tick;
 	const age = ageSeconds(dashboard.collected_at, offsetMs);
