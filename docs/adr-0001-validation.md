@@ -173,3 +173,51 @@ Commit `fa5e0a5` (after the one pinned above) moved external API constants
 redefining it. Rename-only, no logic change. `pytest` (226 passed), `ruff
 check .`, and `ty check` (including `api.py`) were re-run clean against this
 commit.
+
+## Addendum: full-spec audit and remediation
+
+Commits `4e1e7d9`..`70cb50c` (after the two pinned above) came from a
+dedicated audit that extracted every checkable "must/shall/required"
+statement across ADR-0001 Sections 4-17 and verified each against the
+actual code, tests, and docs (not just against this validation doc's own
+claims). Of roughly 256 extracted requirements, 24 were found partial or
+missing. All 24 were fixed:
+
+- **Backend correctness:** a dividend row missing `amount` now raises
+  `DIVIDEND_SCHEMA_ERROR` instead of an uncaught `KeyError`; manual rate's
+  `fetched_at` now records the actual attempt time instead of the owner's
+  `entered_at`; live rates now emit `FLAT_OVERNIGHT_RATE_PROXY` (Section
+  6.2); `create_app()` gained `rate_provider=`/`dividend_providers=`
+  keyword injection to match the chain provider (Section 4.2).
+- **`reconcile.py` report gaps:** `known_after_valuation` labeling, a
+  dollar/absolute diff alongside every percentage diff, both GEX units per
+  contract, and model/instrument/rate-provenance/review metadata in
+  `inputs.json`/`summary.md` -- plus a `quote_time_hash` isolating
+  quote/OI/spot/time/quality-threshold inputs from rate/dividend inputs so
+  N7's "unchanged hash component" claim is demonstrated, not assumed.
+- **`calculation_input_hash`:** now includes analytics.py's quality
+  thresholds and IV-solver tolerances (Section 11.2), closing the same gap
+  in the actual persisted hash, not just reconcile.py's diagnostic copy.
+- **Frontend:** instrument class and a compact warnings/model-id badge now
+  appear on both the GEX heatmap and IV surface panels (Sections 9.4/10/13),
+  not only once in the Snapshot card.
+- **Test coverage:** N5's exact pinned reference table (S=200), a negative
+  `signed_proxy`, GEX scaling by `actual_spot` when `model_spot` differs,
+  full unit-switch invariance (status/color, not just gamma/OI); N6's
+  call/put side selection and `k=ln(K/F)` against the saved forward, plus
+  first-ever coverage of `_piecewise_linear`'s no-extrapolation/no-wide-
+  gap-bridging behavior; N8's missing-amount fallback, moved-ex-date
+  handling, and cross-symbol adapter-error isolation; M4.5's model-
+  limitations/near-ex-date/unknown-timestamp disclosures (`SnapshotMeta`
+  had no test file before).
+- **Process:** `CLAUDE.md` now references ADR-0001 and its precedence over
+  the PRD; a standalone `docs/adr-0001-prd-supersession.md` records the
+  exact superseded provisions as its own M0.1 deliverable, not only inline
+  in the ADR.
+
+Each fix landed as its own reviewed, tested commit. Full re-verification
+after all of them: `pytest` 247 passed, `ruff check .` clean, `ty check`
+clean, frontend `vitest` 41 passed, `biome check` clean, `tsc -b` clean.
+
+Not fixed, and not claimed to be: SPY's dividend schedule remains
+incomplete (see "Known limitations" above -- unchanged by this round).
