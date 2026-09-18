@@ -722,6 +722,19 @@ def test_dividend_malformed_amount_is_schema_error():
     assert exc_info.value.code == "DIVIDEND_SCHEMA_ERROR"
 
 
+def test_dividend_missing_amount_is_schema_error_not_a_crash():
+    row = _dividend_row()
+    del row["amount"]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_dividend_body([row]))
+
+    provider = make_dividend_provider(handler)
+    with pytest.raises(ProviderError) as exc_info:
+        provider.fetch_dividends("AAPL")
+    assert exc_info.value.code == "DIVIDEND_SCHEMA_ERROR"
+
+
 def test_dividend_429_raises_upstream_rate_limited():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "60"}, json={})

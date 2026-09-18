@@ -503,6 +503,9 @@ class NasdaqDividendProvider:
             ex_date = _parse_mdy_date(row.get("exOrEffDate", ""))
             if ex_date is None:
                 raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Row missing exOrEffDate")
+            raw_amount = row.get("amount")
+            if raw_amount is None:
+                raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Row missing amount")
             records.append(
                 DividendRecord(
                     provider_record_id=None,
@@ -511,7 +514,7 @@ class NasdaqDividendProvider:
                     ex_date=ex_date,
                     payment_date=_parse_mdy_date(row.get("paymentDate", "N/A")),
                     declaration_date=_parse_mdy_date(row.get("declarationDate", "N/A")),
-                    amount=_parse_dividend_amount(row["amount"]),
+                    amount=_parse_dividend_amount(raw_amount),
                     kind="ordinary_cash" if row.get("type") == "Cash" else "other",
                     source_ref=NASDAQ_DIVIDENDS_URL.format(symbol=symbol),
                 )

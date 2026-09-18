@@ -3,7 +3,7 @@ import math
 import threading
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 from conftest import StubProvider, make_settings, make_snapshot
@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import storage
 from app import create_app
+from models import DividendFeedSnapshot, RateBatch, RateObservation
 from provider import ProviderError
 
 
@@ -312,6 +313,111 @@ def test_shutdown_closes_a_self_built_providers_http_client_only(tmp_path, monke
     with TestClient(create_app(settings_fixture, provider=injected)):
         pass
     assert injected.closed is False  # app.py must never close an injected provider's client
+
+
+def test_arbitrary_reference_providers_injected_via_create_app_flow_end_to_end(tmp_path):
+    # ADR-0001 4.2: "Inject reference providers through keyword arguments to
+    # create_app, just as the chain provider is injectable. A stub with an
+    # arbitrary provider ID must pass through resolution, analytics,
+    # persistence, and response generation."
+    reference_inputs_path = tmp_path / "reference_inputs.json"
+    reference_inputs_path.write_text(
+        json.dumps(
+            {
+                "input_schema_version": 1,
+                "manual_rate": None,
+                "schedules": {
+                    "SPY": {
+                        "symbol": "SPY",
+                        "reviewed_at": "2026-01-02T21:00:00Z",
+                        "coverage_start": "2026-01-02",
+                        "coverage_end": "2026-04-02",
+                        "no_other_events_expected": True,
+                        "source_refs": ["synthetic"],
+                        "expected_events": [],
+                    }
+                },
+            }
+        )
+    )
+
+    class CustomRateProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.closed = False
+
+        def fetch_rates(self) -> RateBatch:
+            self.calls += 1
+            return RateBatch(
+                provider_id="totally-custom-rate-stub",
+                fetched_at=datetime(2026, 1, 2, 21, 0, tzinfo=UTC),
+                source_ref="test",
+                observations=(
+                    RateObservation(
+                        effective_date=date(2026, 1, 2),
+                        percent_rate=4.0,
+                        rate_type="SOFR",
+                        revision_indicator=None,
+                    ),
+                ),
+                raw_payload_json="{}",
+            )
+
+        def close(self) -> None:
+            self.closed = True
+
+    class CustomDividendProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.closed = False
+
+        def fetch_dividends(self, symbol: str) -> DividendFeedSnapshot:
+            self.calls += 1
+            return DividendFeedSnapshot(
+                provider_id="totally-custom-dividend-stub",
+                symbol=symbol,
+                fetched_at=datetime(2026, 1, 2, 21, 0, tzinfo=UTC),
+                source_asof=None,
+                records=(),
+                raw_payload_json="{}",
+                warnings=(),
+            )
+
+        def close(self) -> None:
+            self.closed = True
+
+    settings = make_settings(str(tmp_path / "t.duckdb")).model_copy(
+        update={
+            "rate_source": "totally-custom-rate-stub",
+            "dividend_sources": {"SPY": "totally-custom-dividend-stub", "QQQ": "fixture", "AAPL": "fixture"},
+            "reference_inputs_path": str(reference_inputs_path),
+        }
+    )
+    rate_provider = CustomRateProvider()
+    dividend_provider = CustomDividendProvider()
+
+    with TestClient(
+        create_app(
+            settings,
+            provider=StubProvider(make_snapshot("fixture")),
+            rate_provider=rate_provider,
+            dividend_providers={"SPY": dividend_provider},
+        )
+    ) as client:
+        response = client.post("/api/dashboard/SPY/refresh")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["market_inputs"]["rate"]["source_provider_id"] == "totally-custom-rate-stub"
+        assert rate_provider.calls == 1
+        assert dividend_provider.calls == 1
+
+        saved = client.get("/api/dashboard/SPY").json()
+        assert saved["market_inputs"]["rate"]["source_provider_id"] == "totally-custom-rate-stub"
+
+    # Injected reference providers are never closed by the app, matching the
+    # chain provider's own ownership rule (see the shutdown test above).
+    assert rate_provider.closed is False
+    assert dividend_provider.closed is False
 
 
 def test_provider_rate_limit_extends_cooldown_and_returns_503(tmp_path):

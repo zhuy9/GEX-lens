@@ -136,7 +136,7 @@ def resolve_rate(
             source_provider_id="manual",
             source_ref=manual.source_ref,
             effective_date=manual.effective_date,
-            fetched_at=manual.entered_at,
+            fetched_at=attempt_started_at,
             raw_percent_rate=None,
             rate_cc=manual.rate_cc,
             quote_convention="continuous_act365f",
@@ -427,10 +427,17 @@ def resolve_market_inputs(
         "dividend_schedule": dividend_schedule.model_dump(mode="json"),
     }
     reference_bundle_hash = hashlib.sha256(canonical_json(bundle).encode()).hexdigest()
+    # Section 6.2: "always emit FLAT_OVERNIGHT_RATE_PROXY for this source" --
+    # derived from rate.normalization rather than threaded as a separate
+    # parameter, since that field is exactly what distinguishes the SOFR
+    # proxy conversion from a manual (already continuous) rate.
+    is_flat_proxy = rate.normalization == "constant_daily_sofr_proxy"
+    rate_warnings = ("FLAT_OVERNIGHT_RATE_PROXY",) if is_flat_proxy else ()
+    warnings = rate_warnings + dividend_warnings
     return MarketInputs(
         resolved_at=resolved_at,
         rate=rate,
         dividend_schedule=dividend_schedule,
-        warnings=dividend_warnings,
+        warnings=warnings,
         reference_bundle_hash=reference_bundle_hash,
     )

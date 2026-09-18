@@ -403,14 +403,27 @@ def _collect_and_save(
     return dashboard_json
 
 
-def create_app(settings: Settings, provider: OptionsDataProvider | None = None) -> FastAPI:
+def create_app(
+    settings: Settings,
+    provider: OptionsDataProvider | None = None,
+    rate_provider: RateDataProvider | None = None,
+    dividend_providers: dict[str, DividendDataProvider | None] | None = None,
+) -> FastAPI:
     storage.init_schema(settings.db_path)
     provider_is_owned = provider is None
     active_provider = provider if provider is not None else build_provider(settings)
-    rate_provider = build_rate_provider(settings.rate_source)
-    dividend_providers = {
-        symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in settings.symbols
-    }
+    rate_provider_is_owned = rate_provider is None
+    active_rate_provider = (
+        rate_provider if rate_provider is not None else build_rate_provider(settings.rate_source)
+    )
+    dividend_providers_are_owned = dividend_providers is None
+    active_dividend_providers = (
+        dividend_providers
+        if dividend_providers is not None
+        else {
+            symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in settings.symbols
+        }
+    )
     gate = RefreshCoordinator(settings.refresh_min_interval_seconds)
 
     @asynccontextmanager
@@ -423,10 +436,15 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
             close = getattr(active_provider, "close", None)
             if close is not None:
                 close()
-        for reference_provider in (rate_provider, *dividend_providers.values()):
-            close = getattr(reference_provider, "close", None)
+        if rate_provider_is_owned:
+            close = getattr(active_rate_provider, "close", None)
             if close is not None:
                 close()
+        if dividend_providers_are_owned:
+            for reference_provider in active_dividend_providers.values():
+                close = getattr(reference_provider, "close", None)
+                if close is not None:
+                    close()
 
     app = FastAPI(lifespan=lifespan)
 
@@ -514,8 +532,8 @@ def create_app(settings: Settings, provider: OptionsDataProvider | None = None) 
             return _collect_and_save(
                 settings,
                 active_provider,
-                rate_provider,
-                dividend_providers,
+                active_rate_provider,
+                active_dividend_providers,
                 symbol,
                 force_reference_refresh=force_reference_refresh,
             )

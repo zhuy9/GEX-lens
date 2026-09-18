@@ -385,6 +385,10 @@ def test_manual_rate_source_makes_zero_provider_calls():
     assert resolved.rate_cc == 0.04
     assert resolved.normalization == "manual_already_continuous"
     assert resolved.quote_convention == "continuous_act365f"
+    # fetched_at is when this attempt read the file (attempt_started_at), not
+    # the owner's entered_at -- those can be days apart.
+    assert resolved.fetched_at == ATTEMPT_AT
+    assert resolved.fetched_at != manual.entered_at
 
 
 def test_manual_rate_with_stale_effective_date_is_rejected():
@@ -586,6 +590,52 @@ def test_reference_bundle_hash_is_deterministic_for_identical_inputs(tmp_path):
         )
 
     assert build().reference_bundle_hash == build().reference_bundle_hash
+
+
+def test_live_rate_emits_flat_overnight_rate_proxy_warning(tmp_path):
+    # Section 6.2: "always emit FLAT_OVERNIGHT_RATE_PROXY for this source" --
+    # any live (non-manual) rate uses the same constant-daily-SOFR-proxy
+    # conversion, not just nyfed_sofr specifically.
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    rate = market_inputs.resolve_rate(
+        rate_source="stub",
+        manual=None,
+        provider=_rate_provider(),
+        valuation_at=VALUATION_AT,
+        attempt_started_at=ATTEMPT_AT,
+        db_path=db_path,
+    )
+    schedule, warnings = _resolve_dividends(db_path, review=_review(expected_events=()))
+    inputs = market_inputs.resolve_market_inputs(
+        rate=rate, dividend_schedule=schedule, dividend_warnings=warnings, resolved_at=VALUATION_AT
+    )
+    assert "FLAT_OVERNIGHT_RATE_PROXY" in inputs.warnings
+
+
+def test_manual_rate_does_not_emit_flat_overnight_rate_proxy_warning(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    manual = ManualRateInput(
+        rate_cc=0.04,
+        effective_date=date(2026, 1, 9),
+        entered_at=datetime(2026, 1, 9, 12, 0, tzinfo=UTC),
+        source_ref="local-file",
+        reason="test",
+    )
+    rate = market_inputs.resolve_rate(
+        rate_source="manual",
+        manual=manual,
+        provider=None,
+        valuation_at=VALUATION_AT,
+        attempt_started_at=ATTEMPT_AT,
+        db_path=db_path,
+    )
+    schedule, warnings = _resolve_dividends(db_path, review=_review(expected_events=()))
+    inputs = market_inputs.resolve_market_inputs(
+        rate=rate, dividend_schedule=schedule, dividend_warnings=warnings, resolved_at=VALUATION_AT
+    )
+    assert "FLAT_OVERNIGHT_RATE_PROXY" not in inputs.warnings
 
 
 # --- local reference-input file --------------------------------------------
