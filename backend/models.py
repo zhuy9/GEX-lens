@@ -339,6 +339,29 @@ class ScheduleReview(BaseModel):
             raise ValueError("coverage_end must not precede coverage_start")
         return self
 
+    @model_validator(mode="after")
+    def _events_unique_and_in_coverage(self) -> ScheduleReview:
+        # C02: this model supports one ordinary event per ex-date -- a
+        # duplicated local entry must be rejected here with a readable
+        # configuration error, not silently summed twice downstream.
+        seen_ids: set[str] = set()
+        seen_ex_dates: set[date] = set()
+        for event in self.expected_events:
+            if not event.event_id:
+                raise ValueError("expected_events must have a nonempty event_id")
+            if event.event_id in seen_ids:
+                raise ValueError(f"duplicate event_id {event.event_id!r} in expected_events")
+            seen_ids.add(event.event_id)
+            if event.ex_date in seen_ex_dates:
+                raise ValueError(f"duplicate ex_date {event.ex_date} in expected_events")
+            seen_ex_dates.add(event.ex_date)
+            if not (self.coverage_start <= event.ex_date <= self.coverage_end):
+                raise ValueError(
+                    f"event {event.event_id} ex_date {event.ex_date} is outside coverage "
+                    f"[{self.coverage_start}, {self.coverage_end}]"
+                )
+        return self
+
 
 class ResolvedDividend(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -380,6 +403,19 @@ class LocalReferenceInputs(BaseModel):
     input_schema_version: Literal[1]
     manual_rate: ManualRateInput | None
     schedules: dict[str, ScheduleReview]
+
+    @model_validator(mode="after")
+    def _schedule_keys_match_review_symbol(self) -> LocalReferenceInputs:
+        # C03: a copy/paste error (schedules["AAPL"] holding a QQQ review)
+        # must fail at load time, not silently select another instrument's
+        # reference feed later.
+        for key, review in self.schedules.items():
+            if review.symbol != key:
+                raise ValueError(
+                    f"schedules[{key!r}] has review.symbol={review.symbol!r}; "
+                    "the key must match the review's own symbol"
+                )
+        return self
 
 
 class MarketInputs(BaseModel):
@@ -441,10 +477,13 @@ class Settings(BaseModel):
     # app.py checks dividend_sources covers exactly those instruments.
     refresh_min_interval_seconds: int
     # ADR-0001 Section 5.2: replaces the old flat risk_free_rate/
-    # dividend_yields. pricing_model/rate_source are plain strings for the
-    # same reason source_mode is (PRD 4.3): a test may inject any resolver
-    # under any configured identity.
-    pricing_model: str
+    # dividend_yields. rate_source is a plain string for the same reason
+    # source_mode is (PRD 4.3): a test may inject any resolver under any
+    # configured identity. pricing_model is different (C08): only one
+    # pricing algorithm is ever executed, so unlike a provider identity it
+    # is not meaningfully selectable -- a misspelled/unsupported value must
+    # fail at startup, not be silently echoed while cash_pv_bsm_v2 runs anyway.
+    pricing_model: Literal["cash_pv_bsm_v2"] = "cash_pv_bsm_v2"
     rate_source: str
     dividend_sources: dict[str, str]
     reference_inputs_path: str

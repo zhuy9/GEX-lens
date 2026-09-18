@@ -295,17 +295,79 @@ def test_repeated_fixture_collections_are_ordered_by_recency_not_uuid(tmp_path):
         symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in SYMBOLS
     }
 
+    now = datetime.now(UTC)
     first = _collect_and_save(
-        settings, provider, rate_provider, dividend_providers, "SPY", force_reference_refresh=False
+        settings,
+        provider,
+        rate_provider,
+        dividend_providers,
+        "SPY",
+        attempt_started_at=now,
+        force_reference_refresh=False,
     )
     time.sleep(0.01)
     second = _collect_and_save(
-        settings, provider, rate_provider, dividend_providers, "SPY", force_reference_refresh=False
+        settings,
+        provider,
+        rate_provider,
+        dividend_providers,
+        "SPY",
+        attempt_started_at=now,
+        force_reference_refresh=False,
     )
     assert first["snapshot_id"] != second["snapshot_id"]
 
     latest = storage.get_latest_dashboard(settings.db_path, settings.source_mode, "SPY")
     assert latest["snapshot_id"] == second["snapshot_id"]
+
+
+def test_reference_resolution_uses_a_real_attempt_clock_distinct_from_valuation_at(tmp_path, monkeypatch):
+    # C04: attempt_started_at must be the real operational clock, not the
+    # (possibly old) economic valuation_at -- conflating them made cache TTL
+    # and review-freshness checks silently key off the wrong clock.
+    import app as app_module
+
+    settings = make_settings(str(tmp_path / "t.duckdb"))
+    storage.init_schema(settings.db_path)
+
+    # A few days after fixtures.FIXED_VALUATION_AT (2026-01-02), the fixture
+    # rate's own effective date -- still within its 7-day freshness window,
+    # but genuinely different from whenever this test actually runs.
+    old_valuation_at = datetime(2026, 1, 5, 21, 0, tzinfo=UTC)
+    snapshot = make_snapshot("fixture").model_copy(
+        update={"chain_asof": old_valuation_at, "collection_started_at": old_valuation_at}
+    )
+    provider = StubProvider(snapshot=snapshot)
+
+    captured = {}
+    real_resolve_rate = app_module.resolve_rate
+
+    def spy_resolve_rate(**kwargs):
+        captured["attempt_started_at"] = kwargs["attempt_started_at"]
+        captured["valuation_at"] = kwargs["valuation_at"]
+        return real_resolve_rate(**kwargs)
+
+    monkeypatch.setattr(app_module, "resolve_rate", spy_resolve_rate)
+
+    rate_provider = app_module.build_rate_provider(settings.rate_source)
+    dividend_providers = {
+        symbol: app_module.build_dividend_provider(settings.dividend_sources[symbol])
+        for symbol in app_module.SYMBOLS
+    }
+    real_now = datetime.now(UTC)
+    app_module._collect_and_save(
+        settings,
+        provider,
+        rate_provider,
+        dividend_providers,
+        "SPY",
+        attempt_started_at=real_now,
+        force_reference_refresh=False,
+    )
+
+    assert captured["valuation_at"] == old_valuation_at
+    assert captured["attempt_started_at"] == real_now
+    assert captured["attempt_started_at"] != old_valuation_at
 
 
 def test_shutdown_closes_a_self_built_providers_http_client_only(tmp_path, monkeypatch):
@@ -352,6 +414,9 @@ def test_arbitrary_reference_providers_injected_via_create_app_flow_end_to_end(t
     # create_app, just as the chain provider is injectable. A stub with an
     # arbitrary provider ID must pass through resolution, analytics,
     # persistence, and response generation."
+    # C04: reviewed_at is checked against the real operational attempt clock,
+    # not the fixed valuation_at this snapshot uses -- it must be recent in
+    # real wall-clock time regardless of the pinned economic valuation date.
     reference_inputs_path = tmp_path / "reference_inputs.json"
     reference_inputs_path.write_text(
         json.dumps(
@@ -361,7 +426,7 @@ def test_arbitrary_reference_providers_injected_via_create_app_flow_end_to_end(t
                 "schedules": {
                     "SPY": {
                         "symbol": "SPY",
-                        "reviewed_at": "2026-01-02T21:00:00Z",
+                        "reviewed_at": datetime.now(UTC).isoformat(),
                         "coverage_start": "2026-01-02",
                         "coverage_end": "2026-04-02",
                         "no_other_events_expected": True,

@@ -1,4 +1,4 @@
-# GEX Lens
+# <img src="frontend/public/gex-lens.png" width="48" height="48" alt="gex-lens-icon" /> GEX Lens
 
 [![CI](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml)
 

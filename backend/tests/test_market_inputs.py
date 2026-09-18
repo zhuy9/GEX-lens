@@ -79,7 +79,7 @@ class StubDividendProvider:
     against that fake "now" would make every cache-age check look negative
     (and therefore ineligible) regardless of what is actually being tested."""
 
-    def __init__(self, records=(), provider_id="stub", fetched_at=ATTEMPT_AT):
+    def __init__(self, records=(), provider_id="test_stub", fetched_at=ATTEMPT_AT):
         self.records = records
         self.provider_id = provider_id
         self.fetched_at = fetched_at
@@ -120,6 +120,7 @@ class StubRateProvider:
 
 def _resolve_dividends(db_path, **overrides):
     kwargs = dict(
+        symbol="AAPL",
         dividend_source="manual_schedule",
         review=_review(),
         provider=None,
@@ -163,14 +164,20 @@ def test_empty_reviewed_schedule_is_allowed():
 
 
 def test_review_older_than_seven_days_requires_re_review():
+    # C05: freshness is validate_review_freshness's own live-only policy,
+    # not resolve_dividend_schedule's -- the pure resolver no longer checks it.
     review = _review(reviewed_at=datetime(2026, 1, 2, 15, 0, tzinfo=UTC))  # 8 days old at Jan 10
     with pytest.raises(ProviderError) as exc:
-        _resolve_dividends("unused", review=review)
+        market_inputs.validate_review_freshness(review, attempt_started_at=ATTEMPT_AT)
     assert exc.value.code == "DIVIDEND_REVIEW_REQUIRED"
+    # Structural resolution alone (no freshness check) still succeeds.
+    schedule, _ = _resolve_dividends("unused", review=review)
+    assert schedule.events == ()
 
 
 def test_review_exactly_seven_days_old_is_still_valid():
     review = _review(reviewed_at=datetime(2026, 1, 3, 15, 0, tzinfo=UTC))  # exactly 7 days old
+    market_inputs.validate_review_freshness(review, attempt_started_at=ATTEMPT_AT)  # must not raise
     schedule, _ = _resolve_dividends("unused", review=review)
     assert schedule.events == ()
 
@@ -193,6 +200,48 @@ def test_coverage_start_after_valuation_date_is_incomplete():
     with pytest.raises(ProviderError) as exc:
         _resolve_dividends("unused", review=review)
     assert exc.value.code == "DIVIDEND_COVERAGE_INCOMPLETE"
+
+
+def test_duplicate_reviewed_event_is_rejected_before_resolution(tmp_path):
+    # C02: a duplicated owner entry must fail at the review boundary itself
+    # -- it must never reach resolve_dividend_schedule and get summed twice
+    # into the pricing context.
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        _review(
+            expected_events=(
+                _expected("e1", "2026-02-05", amount="2.00"),
+                _expected("e1", "2026-02-05", amount="2.00"),
+            )
+        )
+
+
+def test_single_reviewed_event_contributes_once_end_to_end(tmp_path):
+    # C02 acceptance: review -> resolution -> context construction contributes
+    # one event's PV exactly once, even though the source also returns a
+    # duplicate row for it (collapsed separately by source normalization).
+    from analytics import build_expiry_pricing_context
+
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    review = _review(
+        expected_events=(_expected("e1", "2026-02-05", amount="2.00", amount_status="declared"),)
+    )
+    provider = StubDividendProvider(
+        records=(_record("2026-02-05", amount="2.00"), _record("2026-02-05", amount="2.00"))
+    )
+    schedule, _ = _resolve_dividends(db_path, dividend_source="test_stub", review=review, provider=provider)
+    assert len(schedule.events) == 1
+
+    context = build_expiry_pricing_context(
+        expiration=date(2026, 4, 1),
+        valuation_at=VALUATION_AT,
+        actual_spot=100.0,
+        r_cc=0.04,
+        dividend_events=schedule.events,
+    )
+    assert context.used_event_ids == ("e1",)
 
 
 # --- provider-backed matching, conflicts, estimate replacement (N8) -----
@@ -315,6 +364,44 @@ def test_conflicting_duplicate_source_rows_for_same_ex_date_fail(tmp_path):
     with pytest.raises(ProviderError) as exc:
         _resolve_dividends(db_path, dividend_source="test_stub", review=review, provider=provider)
     assert exc.value.code == "DIVIDEND_CONFLICT"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_conflicting_payment_dates_for_same_amount_fail_regardless_of_order(tmp_path, reverse):
+    # C07: equal amounts must not let response order silently pick a payment
+    # date -- a genuine payment-date conflict must fail either way.
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    review = _review(
+        expected_events=(_expected("e1", "2026-02-05", amount="2.00", amount_status="estimated"),)
+    )
+    records = (
+        _record("2026-02-05", amount="2.00", payment_date="2026-02-25"),
+        _record("2026-02-05", amount="2.00", payment_date="2026-03-02"),
+    )
+    provider = StubDividendProvider(records=tuple(reversed(records)) if reverse else records)
+    with pytest.raises(ProviderError) as exc:
+        _resolve_dividends(db_path, dividend_source="test_stub", review=review, provider=provider)
+    assert exc.value.code == "DIVIDEND_CONFLICT"
+
+
+def test_complementary_amount_and_payment_date_merge_regardless_of_order(tmp_path):
+    # C07: one record supplies the amount, another the payment date -- the
+    # merged record must keep both, and the result must not depend on order.
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    review = _review(expected_events=(_expected("e1", "2026-02-05", amount_status="pending_source"),))
+    amount_only = _record("2026-02-05", amount="2.00")
+    payment_date_only = _record("2026-02-05", amount=None, payment_date="2026-02-25")
+
+    for records in ((amount_only, payment_date_only), (payment_date_only, amount_only)):
+        provider = StubDividendProvider(records=records)
+        schedule, _ = _resolve_dividends(
+            db_path, dividend_source="test_stub", review=review, provider=provider
+        )
+        event = schedule.events[0]
+        assert event.amount == Decimal("2.00")
+        assert event.payment_date == date(2026, 2, 25)
 
 
 def test_unsupported_record_kind_is_ignored_not_used_for_pricing(tmp_path):
@@ -445,23 +532,46 @@ def test_manual_rate_with_stale_effective_date_is_rejected():
     assert exc.value.code == "RATE_STALE"
 
 
+def test_manual_rate_with_future_effective_date_is_rejected():
+    # C06: VALUATION_AT is NY-local Jan 10; an effective_date of Jan 11 is a
+    # rate for an instant this valuation hasn't reached yet, not "fresh".
+    manual = ManualRateInput(
+        rate_cc=0.04,
+        effective_date=date(2026, 1, 11),
+        entered_at=datetime(2026, 1, 9, 12, 0, tzinfo=UTC),
+        source_ref="local-file",
+        reason="test",
+    )
+    with pytest.raises(ProviderError) as exc:
+        market_inputs.resolve_rate(
+            rate_source="manual",
+            manual=manual,
+            provider=None,
+            valuation_at=VALUATION_AT,
+            attempt_started_at=ATTEMPT_AT,
+            db_path="unused",
+        )
+    assert exc.value.code == "RATE_EFFECTIVE_DATE_FUTURE"
+
+
 # --- M2.4/M2.5: reference caching ------------------------------------------
 
 
-def _rate_provider() -> StubRateProvider:
+def _rate_provider(provider_id="stub") -> StubRateProvider:
     return StubRateProvider(
         observations=(
             RateObservation(
                 effective_date=date(2026, 1, 9), percent_rate=4.0, rate_type="SOFR", revision_indicator=None
             ),
-        )
+        ),
+        provider_id=provider_id,
     )
 
 
 def test_rate_cache_hit_makes_zero_provider_calls(tmp_path):
     db_path = str(tmp_path / "t.duckdb")
     storage.init_schema(db_path)
-    provider = _rate_provider()
+    provider = _rate_provider(provider_id="test_stub")
     first = market_inputs.resolve_rate(
         rate_source="test_stub",
         manual=None,
@@ -486,7 +596,7 @@ def test_rate_cache_hit_makes_zero_provider_calls(tmp_path):
 def test_rate_cache_miss_after_ttl_expiry_makes_one_new_call(tmp_path):
     db_path = str(tmp_path / "t.duckdb")
     storage.init_schema(db_path)
-    provider = _rate_provider()
+    provider = _rate_provider(provider_id="test_stub")
     market_inputs.resolve_rate(
         rate_source="test_stub",
         manual=None,
@@ -511,7 +621,7 @@ def test_rate_cache_miss_after_ttl_expiry_makes_one_new_call(tmp_path):
 def test_force_refresh_bypasses_ttl_even_when_cache_is_fresh(tmp_path):
     db_path = str(tmp_path / "t.duckdb")
     storage.init_schema(db_path)
-    provider = _rate_provider()
+    provider = _rate_provider(provider_id="test_stub")
     market_inputs.resolve_rate(
         rate_source="test_stub",
         manual=None,
@@ -539,7 +649,7 @@ def test_failed_refetch_after_cache_expiry_preserves_the_previous_cache_entry(tm
     market_inputs.resolve_rate(
         rate_source="test_stub",
         manual=None,
-        provider=_rate_provider(),
+        provider=_rate_provider(provider_id="test_stub"),
         valuation_at=VALUATION_AT,
         attempt_started_at=ATTEMPT_AT,
         db_path=db_path,
@@ -594,7 +704,7 @@ def test_arbitrary_stub_providers_resolve_the_same_canonical_market_inputs(tmp_p
         db_path,
         dividend_source="another-custom-dividend-stub",
         review=_review(expected_events=()),
-        provider=StubDividendProvider(records=()),
+        provider=StubDividendProvider(records=(), provider_id="another-custom-dividend-stub"),
     )
     inputs = market_inputs.resolve_market_inputs(
         rate=rate, dividend_schedule=schedule, dividend_warnings=warnings, resolved_at=VALUATION_AT
@@ -746,6 +856,121 @@ def test_load_local_reference_inputs_rejects_out_of_range_manual_rate(tmp_path, 
     assert exc.value.code == "REFERENCE_INPUT_FILE_INVALID"
 
 
+def test_load_local_reference_inputs_rejects_a_schedule_key_symbol_mismatch(tmp_path):
+    # C03: schedules["AAPL"] holding a QQQ review is a copy/paste error that
+    # must fail at load time, not silently select QQQ's reference feed later.
+    path = tmp_path / "reference_inputs.json"
+    path.write_text(
+        json.dumps(
+            {
+                "input_schema_version": 1,
+                "manual_rate": None,
+                "schedules": {
+                    "AAPL": {
+                        "symbol": "QQQ",
+                        "reviewed_at": "2026-01-02T21:00:00Z",
+                        "coverage_start": "2026-01-02",
+                        "coverage_end": "2026-04-02",
+                        "no_other_events_expected": True,
+                        "source_refs": ["synthetic"],
+                        "expected_events": [],
+                    }
+                },
+            }
+        )
+    )
+    with pytest.raises(ProviderError) as exc:
+        market_inputs.load_local_reference_inputs(path)
+    assert exc.value.code == "REFERENCE_INPUT_FILE_INVALID"
+
+
+# --- C03: requested-identity boundaries -------------------------------------
+
+
+def test_resolve_dividend_schedule_rejects_a_review_symbol_mismatch(tmp_path):
+    with pytest.raises(ProviderError) as exc:
+        _resolve_dividends(str(tmp_path / "t.duckdb"), symbol="QQQ", review=_review(symbol="AAPL"))
+    assert exc.value.code == "DIVIDEND_REVIEW_SYMBOL_MISMATCH"
+
+
+def test_dividend_feed_identity_mismatch_fails_before_caching(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+
+    class WrongIdentityProvider:
+        def fetch_dividends(self, symbol):
+            return DividendFeedSnapshot(
+                provider_id="test_stub",
+                symbol="QQQ",  # wrong -- caller asked for AAPL
+                fetched_at=ATTEMPT_AT,
+                source_asof=None,
+                records=(),
+                raw_payload_json="{}",
+                warnings=(),
+            )
+
+    with pytest.raises(ProviderError) as exc:
+        _resolve_dividends(
+            db_path, dividend_source="test_stub", review=_review(), provider=WrongIdentityProvider()
+        )
+    assert exc.value.code == "DIVIDEND_FEED_IDENTITY_MISMATCH"
+
+
+def test_dividend_record_wrong_symbol_is_rejected(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    wrong_symbol_record = DividendRecord(
+        provider_record_id=None,
+        symbol="QQQ",
+        currency="USD",
+        ex_date=date(2026, 2, 5),
+        payment_date=None,
+        declaration_date=None,
+        amount=Decimal("0.25"),
+        kind="ordinary_cash",
+        source_ref="test",
+    )
+    provider = StubDividendProvider(records=(wrong_symbol_record,))
+    with pytest.raises(ProviderError) as exc:
+        _resolve_dividends(db_path, dividend_source="test_stub", review=_review(), provider=provider)
+    assert exc.value.code == "DIVIDEND_RECORD_SYMBOL_MISMATCH"
+
+
+def test_dividend_record_non_usd_currency_is_rejected(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    non_usd_record = DividendRecord(
+        provider_record_id=None,
+        symbol="AAPL",
+        currency="EUR",
+        ex_date=date(2026, 2, 5),
+        payment_date=None,
+        declaration_date=None,
+        amount=Decimal("0.25"),
+        kind="ordinary_cash",
+        source_ref="test",
+    )
+    provider = StubDividendProvider(records=(non_usd_record,))
+    with pytest.raises(ProviderError) as exc:
+        _resolve_dividends(db_path, dividend_source="test_stub", review=_review(), provider=provider)
+    assert exc.value.code == "DIVIDEND_CURRENCY_UNSUPPORTED"
+
+
+def test_rate_batch_identity_mismatch_is_rejected(tmp_path):
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    with pytest.raises(ProviderError) as exc:
+        market_inputs.resolve_rate(
+            rate_source="test_stub",
+            manual=None,
+            provider=_rate_provider(provider_id="stub"),  # does not match rate_source
+            valuation_at=VALUATION_AT,
+            attempt_started_at=ATTEMPT_AT,
+            db_path=db_path,
+        )
+    assert exc.value.code == "RATE_BATCH_IDENTITY_MISMATCH"
+
+
 # --- M2.7: fixture providers need neither network nor an untracked file ---
 
 
@@ -761,6 +986,7 @@ def test_fixture_dividend_provider_and_review_resolve_to_an_empty_schedule(tmp_p
     storage.init_schema(db_path)
     review = fixtures.fixture_schedule_review("SPY")
     schedule, warnings = market_inputs.resolve_dividend_schedule(
+        symbol="SPY",
         dividend_source="fixture",
         review=review,
         provider=fixtures.FixtureDividendProvider(),

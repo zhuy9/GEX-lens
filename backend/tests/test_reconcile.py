@@ -674,6 +674,58 @@ def test_known_after_valuation_flagged_when_scenario_reviewed_after_valuation(tm
     assert "known_after_valuation" in (out_dir / "summary.md").read_text()
 
 
+def test_counterfactual_review_authored_after_the_snapshot_is_not_rejected_as_stale(tmp_path):
+    # C05: a corrected review entered AFTER the historical valuation must
+    # still resolve -- this diagnostic is not a live refresh, so it must not
+    # require a later-authored counterfactual review to have existed before
+    # the historical snapshot's own valuation time (negative review age).
+    db_path = str(tmp_path / "t.duckdb")
+    storage.init_schema(db_path)
+    snapshot_id = _save_v2_snapshot(db_path)
+    scenario_path = tmp_path / "scenario.json"
+    scenario_path.write_text(
+        json.dumps(
+            {
+                "input_schema_version": 1,
+                "manual_rate": {
+                    "rate_cc": 0.05,
+                    "effective_date": "2026-01-02",
+                    "entered_at": "2026-01-03T00:00:00Z",
+                    "source_ref": "synthetic-scenario",
+                    "reason": "next-day correction",
+                },
+                "schedules": {
+                    "SPY": {
+                        "symbol": "SPY",
+                        "reviewed_at": "2026-01-03T12:00:00Z",  # a day after VALUATION_AT (Jan 2)
+                        "coverage_start": "2026-01-02",
+                        "coverage_end": "2026-04-02",
+                        "no_other_events_expected": True,
+                        "source_refs": ["synthetic-scenario"],
+                        "expected_events": [],
+                    }
+                },
+            }
+        )
+    )
+    out_dir = tmp_path / "report"
+    exit_code = reconcile.main(
+        [
+            "--db",
+            db_path,
+            "--snapshot-id",
+            snapshot_id,
+            "--scenario-inputs",
+            str(scenario_path),
+            "--out",
+            str(out_dir),
+        ]
+    )
+    assert exit_code == 0
+    inputs = json.loads((out_dir / "inputs.json").read_text())
+    assert inputs["known_after_valuation"] is True
+
+
 def test_quote_time_hash_is_identical_regardless_of_scenario_inputs(tmp_path):
     # N7: "Changing only scenario inputs must leave the normalized
     # quote/OI/spot/time hash component unchanged."

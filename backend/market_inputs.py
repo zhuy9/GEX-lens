@@ -84,6 +84,17 @@ def _fresh_cached_entry(
     return cached["normalized_json"] if 0 <= age <= ttl_seconds else None
 
 
+def _check_rate_batch_identity(batch: RateBatch, *, provider_id: str) -> None:
+    # C03: a configured identity must agree with what the provider actually
+    # returns, whether read fresh or from cache -- applies to any injected
+    # provider, not only nyfed_sofr.
+    if batch.provider_id != provider_id:
+        raise ProviderError(
+            "RATE_BATCH_IDENTITY_MISMATCH",
+            f"Rate batch provider_id {batch.provider_id!r} does not match configured {provider_id!r}",
+        )
+
+
 def _fetch_rate_batch_cached(
     provider: RateDataProvider,
     provider_id: str,
@@ -102,8 +113,11 @@ def _fetch_rate_batch_cached(
             attempt_started_at=attempt_started_at,
         )
         if normalized is not None:
-            return RateBatch.model_validate(normalized)
+            batch = RateBatch.model_validate(normalized)
+            _check_rate_batch_identity(batch, provider_id=provider_id)
+            return batch
     batch = provider.fetch_rates()
+    _check_rate_batch_identity(batch, provider_id=provider_id)
     storage.upsert_reference_cache(
         db_path,
         kind="rate",
@@ -130,7 +144,15 @@ def resolve_rate(
         if manual is None:
             raise ProviderError("RATE_UNAVAILABLE", "rate_source=manual requires manual_rate")
         ny_date = ny_local_date(valuation_at)
-        if (ny_date - manual.effective_date).days > RATE_FRESHNESS_DAYS:
+        age_days = (ny_date - manual.effective_date).days
+        # C06: a future effective_date is not "extra fresh" -- it describes a
+        # rate for an instant this valuation hasn't reached yet.
+        if age_days < 0:
+            raise ProviderError(
+                "RATE_EFFECTIVE_DATE_FUTURE",
+                f"Manual rate's effective_date {manual.effective_date} is after valuation date {ny_date}",
+            )
+        if age_days > RATE_FRESHNESS_DAYS:
             raise ProviderError("RATE_STALE", "Manual rate's effective_date is stale for this valuation")
         return ResolvedRate(
             source_provider_id="manual",
@@ -172,13 +194,15 @@ def resolve_rate(
 # --- dividend resolution (Section 7) ----------------------------------------
 
 
-def _validate_review(
+def _validate_review_coverage(
     review: ScheduleReview,
     *,
     valuation_at: datetime,
-    attempt_started_at: datetime,
     latest_in_scope_expiration: date | None,
 ) -> None:
+    """Structural coverage validation (Section 7.3): applies to both a live
+    refresh and the offline counterfactual diagnostic (C05) -- it never
+    depends on when the review was authored relative to a real attempt."""
     valuation_date = ny_local_date(valuation_at)
     if review.coverage_start > valuation_date:
         raise ProviderError(
@@ -192,6 +216,15 @@ def _validate_review(
             f"{review.symbol}: coverage ends {review.coverage_end}, "
             f"before latest in-scope expiration {latest_in_scope_expiration}",
         )
+
+
+def validate_review_freshness(review: ScheduleReview, *, attempt_started_at: datetime) -> None:
+    """Live-only operational policy (Section 7.3/8.2): a review authored too
+    long ago (or, per C05, one whose reviewed_at is still in this attempt's
+    future) must block a live refresh. Call this only from a live refresh --
+    never from the read-only counterfactual diagnostic, which must not
+    require a later-authored review to have existed before its historical
+    snapshot's valuation time."""
     review_age_days = (ny_local_date(attempt_started_at) - ny_local_date(review.reviewed_at)).days
     if not (0 <= review_age_days <= REVIEW_MAX_AGE_DAYS):
         raise ProviderError(
@@ -201,7 +234,7 @@ def _validate_review(
 
 
 def _normalize_source_records(
-    records: tuple[DividendRecord, ...], valuation_at: datetime
+    records: tuple[DividendRecord, ...], valuation_at: datetime, symbol: str
 ) -> dict[date, DividendRecord]:
     """Section 7.2: exact duplicates collapse; conflicting non-null amounts
     for the same ex-date fail. Only ordinary_cash records are usable here --
@@ -213,6 +246,18 @@ def _normalize_source_records(
     for record in records:
         if record.kind != "ordinary_cash":
             continue
+        # C03: a usable record must be verified for the requested security
+        # and currency -- never priced as USD by assumption.
+        if record.symbol != symbol:
+            raise ProviderError(
+                "DIVIDEND_RECORD_SYMBOL_MISMATCH",
+                f"Dividend record symbol {record.symbol!r} does not match requested {symbol!r}",
+            )
+        if record.currency != "USD":
+            raise ProviderError(
+                "DIVIDEND_CURRENCY_UNSUPPORTED",
+                f"Ex-date {record.ex_date}: unsupported currency {record.currency!r}, only USD is priced",
+            )
         declaration_date = record.declaration_date
         if declaration_date is not None and declaration_date > ny_local_date(valuation_at):
             raise ProviderError(
@@ -224,11 +269,30 @@ def _normalize_source_records(
         if existing is None or existing == record:
             by_ex_date[record.ex_date] = record
             continue
+        # C07: conflict/merge must consider every economic field that
+        # matters downstream (amount, payment date), not amount alone --
+        # otherwise a complementary field from the record that lost the
+        # "first non-null wins" race is silently discarded, and the outcome
+        # depends on response order.
         if existing.amount is not None and record.amount is not None and existing.amount != record.amount:
+            raise ProviderError("DIVIDEND_CONFLICT", f"Conflicting amounts for ex-date {record.ex_date}")
+        if (
+            existing.payment_date is not None
+            and record.payment_date is not None
+            and existing.payment_date != record.payment_date
+        ):
             raise ProviderError(
-                "DIVIDEND_CONFLICT", f"Conflicting source records for ex-date {record.ex_date}"
+                "DIVIDEND_CONFLICT", f"Conflicting payment dates for ex-date {record.ex_date}"
             )
-        by_ex_date[record.ex_date] = existing if existing.amount is not None else record
+        merged_payment_date = (
+            existing.payment_date if existing.payment_date is not None else record.payment_date
+        )
+        by_ex_date[record.ex_date] = existing.model_copy(
+            update={
+                "amount": existing.amount if existing.amount is not None else record.amount,
+                "payment_date": merged_payment_date,
+            }
+        )
     return by_ex_date
 
 
@@ -316,6 +380,17 @@ def _resolve_one_event(
     )
 
 
+def _check_dividend_feed_identity(feed: DividendFeedSnapshot, *, provider_id: str, symbol: str) -> None:
+    # C03: a mismatched feed identity must fail before it is cached or
+    # converted into a resolved cash event, whether read fresh or from cache.
+    if feed.symbol != symbol or feed.provider_id != provider_id:
+        raise ProviderError(
+            "DIVIDEND_FEED_IDENTITY_MISMATCH",
+            f"Dividend feed identity ({feed.provider_id!r}, {feed.symbol!r}) does not match "
+            f"requested ({provider_id!r}, {symbol!r})",
+        )
+
+
 def _fetch_dividend_feed_cached(
     provider: DividendDataProvider,
     provider_id: str,
@@ -335,8 +410,11 @@ def _fetch_dividend_feed_cached(
             attempt_started_at=attempt_started_at,
         )
         if normalized is not None:
-            return DividendFeedSnapshot.model_validate(normalized)
+            feed = DividendFeedSnapshot.model_validate(normalized)
+            _check_dividend_feed_identity(feed, provider_id=provider_id, symbol=symbol)
+            return feed
     feed = provider.fetch_dividends(symbol)
+    _check_dividend_feed_identity(feed, provider_id=provider_id, symbol=symbol)
     storage.upsert_reference_cache(
         db_path,
         kind="dividends",
@@ -351,6 +429,7 @@ def _fetch_dividend_feed_cached(
 
 def resolve_dividend_schedule(
     *,
+    symbol: str,
     dividend_source: str,
     review: ScheduleReview,
     provider: DividendDataProvider | None,
@@ -360,10 +439,22 @@ def resolve_dividend_schedule(
     db_path: str,
     force_refresh: bool = False,
 ) -> tuple[ResolvedDividendSchedule, tuple[str, ...]]:
-    _validate_review(
+    # C03: resolve against the caller's requested symbol explicitly, not the
+    # review's own (already-validated-equal) field -- a copy/paste error
+    # passing the wrong review must still be caught here, not just upstream.
+    if review.symbol != symbol:
+        raise ProviderError(
+            "DIVIDEND_REVIEW_SYMBOL_MISMATCH",
+            f"Reviewed schedule symbol {review.symbol!r} does not match requested {symbol!r}",
+        )
+    # C05: only structural coverage validation happens here, so this pure
+    # resolver serves both a live refresh and the offline counterfactual
+    # diagnostic. A live refresh must additionally call
+    # validate_review_freshness() itself before this -- that operational
+    # policy does not belong in a resolver the diagnostic also reuses.
+    _validate_review_coverage(
         review,
         valuation_at=valuation_at,
-        attempt_started_at=attempt_started_at,
         latest_in_scope_expiration=latest_in_scope_expiration,
     )
 
@@ -377,12 +468,12 @@ def resolve_dividend_schedule(
         feed = _fetch_dividend_feed_cached(
             provider,
             dividend_source,
-            review.symbol,
+            symbol,
             db_path=db_path,
             attempt_started_at=attempt_started_at,
             force_refresh=force_refresh,
         )
-        source_by_ex_date = _normalize_source_records(feed.records, valuation_at)
+        source_by_ex_date = _normalize_source_records(feed.records, valuation_at, symbol)
 
         expected_ex_dates = {event.ex_date for event in review.expected_events}
         unexpected = sorted(

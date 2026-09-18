@@ -582,6 +582,24 @@ def test_context_warns_when_alignment_is_unverified_for_an_eligible_event():
     assert "DIVIDEND_ALIGNMENT_UNVERIFIED" in context.warnings
 
 
+def test_context_raises_on_pre_ex_date_only_spot_with_post_ex_valuation_for_an_already_ex_event():
+    # C01: the event's ex_at <= valuation_at (already past, PV-ineligible)
+    # must still be checked for alignment -- the eligibility filter must not
+    # skip this the way it used to.
+    ex_at = dividend_ex_at(date(2026, 1, 10))
+    event = make_dividend(ex_date="2026-01-10")
+    with pytest.raises(ProviderError) as exc:
+        build_expiry_pricing_context(
+            expiration=date(2026, 1, 31),
+            valuation_at=ex_at + timedelta(hours=1),
+            actual_spot=100.0,
+            r_cc=0.04,
+            dividend_events=(event,),
+            spot_asof_date=date(2026, 1, 5),  # before ex-date
+        )
+    assert exc.value.code == "DIVIDEND_PRICE_TIME_MISMATCH"
+
+
 def test_context_raises_on_a_known_cross_ex_mismatch():
     ex_date = date(2026, 1, 10)
     ex_at = dividend_ex_at(ex_date)

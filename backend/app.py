@@ -40,6 +40,7 @@ from market_inputs import (
     resolve_dividend_schedule,
     resolve_market_inputs,
     resolve_rate,
+    validate_review_freshness,
 )
 from models import (
     ChainRequest,
@@ -269,6 +270,7 @@ def _collect_and_save(
     dividend_providers: dict[str, DividendDataProvider | None],
     symbol: str,
     *,
+    attempt_started_at: datetime,
     force_reference_refresh: bool,
 ) -> dict:
     request = ChainRequest(
@@ -303,7 +305,7 @@ def _collect_and_save(
         manual=local_inputs.manual_rate if local_inputs is not None else None,
         provider=rate_provider,
         valuation_at=valuation_at,
-        attempt_started_at=valuation_at,
+        attempt_started_at=attempt_started_at,
         db_path=settings.db_path,
         force_refresh=force_reference_refresh,
     )
@@ -311,7 +313,7 @@ def _collect_and_save(
     if dividend_source == "fixture":
         from fixtures import fixture_schedule_review
 
-        review = fixture_schedule_review(symbol, valuation_at)
+        review = fixture_schedule_review(symbol, valuation_at, reviewed_at=attempt_started_at)
     else:
         if local_inputs is None or symbol not in local_inputs.schedules:
             raise ProviderError(
@@ -319,6 +321,11 @@ def _collect_and_save(
                 f"No reviewed schedule for {symbol!r} in {settings.reference_inputs_path}",
             )
         review = local_inputs.schedules[symbol]
+
+    # C05: freshness is this live refresh's own operational policy, not the
+    # resolver's -- the offline counterfactual diagnostic (reconcile.py)
+    # reuses that same resolver without this check.
+    validate_review_freshness(review, attempt_started_at=attempt_started_at)
 
     latest_in_scope_expiration = max(
         (
@@ -329,11 +336,12 @@ def _collect_and_save(
         default=None,
     )
     dividend_schedule, dividend_warnings = resolve_dividend_schedule(
+        symbol=symbol,
         dividend_source=dividend_source,
         review=review,
         provider=dividend_providers.get(symbol),
         valuation_at=valuation_at,
-        attempt_started_at=valuation_at,
+        attempt_started_at=attempt_started_at,
         latest_in_scope_expiration=latest_in_scope_expiration,
         db_path=settings.db_path,
         force_refresh=force_reference_refresh,
@@ -342,7 +350,7 @@ def _collect_and_save(
         rate=resolved_rate,
         dividend_schedule=dividend_schedule,
         dividend_warnings=dividend_warnings,
-        resolved_at=snapshot.collection_started_at,
+        resolved_at=datetime.now(UTC),
     )
     for code in market_inputs_obj.warnings:
         if code not in warnings:
@@ -558,6 +566,10 @@ def create_app(
             if retry_after is None:
                 raise _http_error(409, "REFRESH_IN_PROGRESS", "A refresh is already running")
             raise _http_error(429, "REFRESH_COOLDOWN", "Refresh is on cooldown", retry_after)
+        # Captured once, right after acquiring the gate: the real operational
+        # clock for cache TTL/review-freshness (Section 8.2), kept separate
+        # from valuation_at's economic clock used for pricing/eligibility.
+        attempt_started_at = datetime.now(UTC)
         # Only ProviderError (the adapter's documented failure contract) is
         # mapped to an HTTP response here. Anything else is a real bug, not
         # an expected failure -- let it propagate to the one unhandled-
@@ -570,6 +582,7 @@ def create_app(
                 active_rate_provider,
                 active_dividend_providers,
                 symbol,
+                attempt_started_at=attempt_started_at,
                 force_reference_refresh=force_reference_refresh,
             )
         except ProviderError as exc:

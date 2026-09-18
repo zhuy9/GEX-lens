@@ -317,6 +317,7 @@ def _resolve_scenario(
         db_path="unused",
     )
     schedule, _ = resolve_dividend_schedule(
+        symbol=symbol,
         dividend_source="manual_schedule",
         review=review,
         provider=None,

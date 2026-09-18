@@ -43,6 +43,9 @@ from provider import ProviderError
 # not always present.
 _LAST_TRADE_RE = re.compile(r"^LAST TRADE:\s*\$([\d,]+(?:\.\d+)?)\s*\(AS OF (.+)\)$")
 _HEADER_DATE_FMT = "%B %d, %Y"
+# The lastTrade "(AS OF ...)" suffix, e.g. "SEP 16, 2026" -- a calendar date
+# only, no time-of-day (docs/source-contract.md).
+_LAST_TRADE_DATE_FMT = "%b %d, %Y"
 # aapl--260916c00245000 -> YY MM DD, C/P, strike*1000 zero-padded to 8 digits.
 # Only ever seen on the call side (docs/source-contract.md).
 _DRILLDOWN_RE = re.compile(r"--(\d{2})(\d{2})(\d{2})[cp](\d{8})$")
@@ -259,6 +262,7 @@ class NasdaqProvider:
         total_bytes = 0
         underlying_price: float | None = None
         chain_asof_raw: str | None = None
+        spot_asof_date: date | None = None
         price_changed = False
         response_count = 0
         total_record: int | None = None
@@ -291,6 +295,7 @@ class NasdaqProvider:
                     raise ProviderError("INVALID_UNDERLYING_PRICE", "Could not parse lastTrade field")
                 underlying_price = float(match.group(1).replace(",", ""))
                 chain_asof_raw = page.chain_asof_raw
+                spot_asof_date = self._parse_last_trade_date(match.group(2))
             elif match:
                 repeated_price = float(match.group(1).replace(",", ""))
                 if underlying_price is not None and repeated_price != underlying_price:
@@ -406,6 +411,7 @@ class NasdaqProvider:
             collected_at=collected_at,
             chain_asof=chain_asof,
             spot_asof=None,
+            spot_asof_date=spot_asof_date,
             oi_asof=None,
             contracts=contracts,
             warnings=tuple(warnings),
@@ -438,6 +444,16 @@ class NasdaqProvider:
         if parsed.tzinfo is None:
             return None
         return parsed.astimezone(UTC)
+
+    def _parse_last_trade_date(self, raw: str) -> date | None:
+        """The lastTrade "(AS OF ...)" text is a verified calendar date, not
+        a guess -- fail loudly on an unrecognized shape rather than silently
+        leaving spot_asof_date null (Section 7.5 needs this evidence to
+        validate ex-dividend alignment)."""
+        try:
+            return datetime.strptime(raw.strip(), _LAST_TRADE_DATE_FMT).date()
+        except ValueError as exc:
+            raise ProviderError("SCHEMA_ERROR", f"Unparseable lastTrade AS OF date {raw!r}") from exc
 
     def _sanitize_raw_payload(self, params: dict, pages: list[dict]) -> str:
         import json

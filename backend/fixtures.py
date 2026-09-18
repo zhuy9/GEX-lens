@@ -173,16 +173,19 @@ class FixtureProvider:
         )
 
 
-def fixture_schedule_review(symbol: str, valuation_at: datetime = FIXED_VALUATION_AT) -> ScheduleReview:
-    """Synthetic reviewed schedule with no expected events, freshly
-    "reviewed" at valuation_at itself so it never goes stale regardless of
-    which synthetic/stub clock a caller's own snapshot happens to use
-    (Section 8.2: fixture inputs use a synthetic economic clock for
-    review-age dates, not the real wall clock)."""
+def fixture_schedule_review(
+    symbol: str, valuation_at: datetime = FIXED_VALUATION_AT, reviewed_at: datetime | None = None
+) -> ScheduleReview:
+    """Synthetic reviewed schedule with no expected events. Coverage brackets
+    the fixture's own synthetic economic clock (valuation_at), so coverage
+    bounds never depend on the real wall clock. reviewed_at defaults to
+    valuation_at, but a caller separating economic time from a real
+    operational attempt clock (C04) may pass that attempt time explicitly so
+    the review never goes stale regardless of the real wall clock."""
     today = ny_local_date(valuation_at)
     return ScheduleReview(
         symbol=symbol,
-        reviewed_at=valuation_at,
+        reviewed_at=reviewed_at if reviewed_at is not None else valuation_at,
         coverage_start=today,
         coverage_end=today + timedelta(days=FIXTURE_REVIEW_COVERAGE_DAYS),
         no_other_events_expected=True,

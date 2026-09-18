@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from models import ChainSnapshot, OptionQuote, Settings
+from models import ChainSnapshot, ExpectedDividend, OptionQuote, ScheduleReview, Settings
 
 VALID = dict(
     source_mode="fixture",
@@ -28,6 +28,9 @@ def test_valid_settings_parses():
         # Enabled symbols now come from instruments.py, not settings.
         {"symbols": ("SPY",)},
         {"refresh_min_interval_seconds": 59},
+        # C08: only one pricing algorithm is ever executed -- an unsupported
+        # model string must fail at startup, not be silently echoed.
+        {"pricing_model": "some_other_model_v3"},
     ],
 )
 def test_invalid_settings_rejected(override):
@@ -101,3 +104,60 @@ def _snapshot_kwargs(**overrides) -> dict:
 def test_naive_snapshot_datetime_is_rejected(field):
     with pytest.raises(ValidationError):
         ChainSnapshot(**_snapshot_kwargs(**{field: datetime(2026, 1, 15, 16, 0)}))
+
+
+# C02: ScheduleReview must reject duplicate/out-of-coverage events at the
+# canonical boundary, not let the resolver sum them silently.
+
+
+def _expected(event_id, ex_date, amount="1.00") -> ExpectedDividend:
+    return ExpectedDividend(
+        event_id=event_id,
+        ex_date=date.fromisoformat(ex_date),
+        payment_date=None,
+        amount=Decimal(amount),
+        amount_status="declared",
+        source_ref="test",
+    )
+
+
+def _review_kwargs(**overrides) -> dict:
+    defaults = dict(
+        symbol="AAPL",
+        reviewed_at=datetime(2026, 1, 1, tzinfo=UTC),
+        coverage_start=date(2026, 1, 1),
+        coverage_end=date(2026, 4, 1),
+        no_other_events_expected=True,
+        source_refs=("test",),
+        expected_events=(),
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_duplicate_event_id_is_rejected():
+    with pytest.raises(ValidationError):
+        ScheduleReview(
+            **_review_kwargs(expected_events=(_expected("e1", "2026-02-05"), _expected("e1", "2026-03-05")))
+        )
+
+
+def test_duplicate_ex_date_under_different_ids_is_rejected():
+    with pytest.raises(ValidationError):
+        ScheduleReview(
+            **_review_kwargs(expected_events=(_expected("e1", "2026-02-05"), _expected("e2", "2026-02-05")))
+        )
+
+
+def test_event_outside_coverage_is_rejected():
+    with pytest.raises(ValidationError):
+        ScheduleReview(
+            **_review_kwargs(coverage_end=date(2026, 2, 1), expected_events=(_expected("e1", "2026-03-05"),))
+        )
+
+
+def test_unique_in_coverage_events_are_accepted():
+    review = ScheduleReview(
+        **_review_kwargs(expected_events=(_expected("e1", "2026-02-05"), _expected("e2", "2026-03-05")))
+    )
+    assert len(review.expected_events) == 2

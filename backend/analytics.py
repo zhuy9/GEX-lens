@@ -259,9 +259,12 @@ def build_expiry_pricing_context(
     pv = 0.0
     for event in dividend_events:
         ex_at = dividend_ex_at(event.ex_date)
-        if not (valuation_at < ex_at <= expiry_at):
-            continue
 
+        # Alignment must be checked for every known event, not only the ones
+        # still eligible for this expiry's PV sum -- an event already ex at
+        # valuation_at is exactly the case that needs checking (Section 7.5:
+        # a cum-dividend spot cannot be paired with a post-ex valuation), and
+        # skipping it here would let that mismatch through undetected.
         alignment_warning = check_price_time_alignment(
             chain_asof=chain_asof,
             spot_asof=spot_asof,
@@ -271,6 +274,9 @@ def build_expiry_pricing_context(
         )
         if alignment_warning is not None and alignment_warning not in warnings:
             warnings.append(alignment_warning)
+
+        if not (valuation_at < ex_at <= expiry_at):
+            continue
 
         # Section 9.5: a modeling caution, not a trade/exercise signal.
         if (

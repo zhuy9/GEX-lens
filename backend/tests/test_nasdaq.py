@@ -112,6 +112,32 @@ def test_single_page_parses_spot_and_contracts():
     assert "MULTIPLIER_ASSUMED" in snapshot.warnings
 
 
+def test_last_trade_as_of_date_becomes_spot_asof_date():
+    # C01: the verified lastTrade "(AS OF ...)" calendar date must reach
+    # ChainSnapshot.spot_asof_date, not be silently dropped.
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+
+    provider = make_provider(handler)
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert snapshot.spot_asof_date == date(2026, 1, 15)
+    assert snapshot.spot_asof is None  # still no invented time-of-day
+
+
+def test_unparseable_last_trade_as_of_date_is_a_schema_error():
+    rows = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF garbage)", rows))
+
+    provider = make_provider(handler)
+    with pytest.raises(ProviderError) as exc:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert exc.value.code == "SCHEMA_ERROR"
+
+
 # R06: data.table.asOf has never been observed populated and its format is
 # unverified (docs/source-contract.md) -- only an unambiguous, timezone-aware
 # value may become chain_asof. Anything else must fall back safely, not
