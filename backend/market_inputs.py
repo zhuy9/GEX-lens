@@ -491,7 +491,13 @@ def resolve_dividend_schedule(
             attempt_started_at=attempt_started_at,
             force_refresh=force_refresh,
         )
-        source_by_ex_date = _normalize_source_records(feed.records, valuation_at, symbol)
+
+        source_by_ex_date = _normalize_source_records(
+            records=feed.records,
+            valuation_at=valuation_at,
+            symbol=symbol,
+            latest_in_scope_expiration=latest_in_scope_expiration,
+        )
 
         expected_ex_dates = {event.ex_date for event in review.expected_events}
         unexpected = sorted(
