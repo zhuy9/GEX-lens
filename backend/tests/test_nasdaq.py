@@ -195,7 +195,7 @@ def test_missing_or_invalid_spot_raises_without_fallback(bad_last_trade):
 
 
 def test_continuation_page_without_header_uses_carried_expiration(monkeypatch):
-    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "CHAIN_PAGE_LIMIT", 2)
     page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
     page2 = [_data_row("aapl", "260115", "100.00", "00100000")]  # no header; must inherit Jan 15 2026
 
@@ -226,7 +226,7 @@ def test_continuation_page_without_header_uses_carried_expiration(monkeypatch):
 
 def test_repeated_page_without_progress_is_incomplete_chain(monkeypatch):
     # PRD 5.2: a page that repeats without progress -> INCOMPLETE_CHAIN
-    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "CHAIN_PAGE_LIMIT", 2)
     page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -240,7 +240,7 @@ def test_repeated_page_without_progress_is_incomplete_chain(monkeypatch):
 
 def test_changed_underlying_price_on_later_page_adds_warning_and_keeps_first_price(monkeypatch):
     # M1.11
-    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "CHAIN_PAGE_LIMIT", 2)
     page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
     page2 = [_data_row("aapl", "260115", "100.00", "00100000")]
 
@@ -472,7 +472,7 @@ def test_premature_short_page_inconsistent_with_total_record_is_rejected():
 
 
 def test_empty_intermediate_page_inconsistent_with_total_record_is_rejected(monkeypatch):
-    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "CHAIN_PAGE_LIMIT", 2)
     page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -490,7 +490,7 @@ def test_empty_intermediate_page_inconsistent_with_total_record_is_rejected(monk
 
 
 def test_total_record_changing_between_pages_is_rejected(monkeypatch):
-    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "CHAIN_PAGE_LIMIT", 2)
     page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
     page2 = [_data_row("aapl", "260115", "100.00", "00100000")]
 
@@ -512,7 +512,7 @@ def test_total_record_changing_between_pages_is_rejected(monkeypatch):
 def test_exact_multiple_of_page_limit_requires_a_trailing_empty_page(monkeypatch):
     # total rows == 2 full pages exactly; neither looks "short", so a third,
     # explicitly empty page is required to confirm completion.
-    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "CHAIN_PAGE_LIMIT", 2)
     page1 = [_header_row("January 15, 2026"), _data_row("aapl", "260115", "95.00", "00095000")]
     page2 = [
         _data_row("aapl", "260115", "100.00", "00100000"),
@@ -554,8 +554,8 @@ def test_legitimate_empty_complete_result_is_accepted():
 def test_exceeding_max_requests_without_finishing_is_incomplete_chain(monkeypatch):
     # M3.3: pagination that never reaches a short page must fail loudly,
     # not loop forever or silently truncate.
-    monkeypatch.setattr(nasdaq, "PAGE_LIMIT", 2)
-    monkeypatch.setattr(nasdaq, "MAX_REQUESTS", 3)
+    monkeypatch.setattr(nasdaq, "CHAIN_PAGE_LIMIT", 2)
+    monkeypatch.setattr(nasdaq, "CHAIN_MAX_REQUESTS", 3)
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:

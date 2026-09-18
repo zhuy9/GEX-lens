@@ -14,6 +14,19 @@ from decimal import Decimal, InvalidOperation
 
 import httpx
 
+from api import (
+    CHAIN_COLLECTION_WINDOW_SECONDS,
+    CHAIN_MAX_CONTRACTS,
+    CHAIN_MAX_REQUESTS,
+    CHAIN_MAX_RESPONSE_BYTES,
+    CHAIN_PAGE_LIMIT,
+    CONNECT_TIMEOUT_SECONDS,
+    NASDAQ_CHAIN_URL,
+    NASDAQ_DIVIDENDS_URL,
+    NASDAQ_HEADERS,
+    REFERENCE_MAX_RESPONSE_BYTES,
+    RW_POOL_TIMEOUT_SECONDS,
+)
 from instruments import INSTRUMENTS
 from models import (
     ChainRequest,
@@ -25,19 +38,6 @@ from models import (
 )
 from provider import ProviderError
 
-BASE_URL = "https://api.nasdaq.com/api/quote/{symbol}/option-chain"
-DIVIDENDS_URL = "https://api.nasdaq.com/api/quote/{symbol}/dividends"
-
-PAGE_LIMIT = 1000
-MAX_REQUESTS = 10
-MAX_RESPONSE_BYTES = 10 * 1024 * 1024
-MAX_REFERENCE_RESPONSE_BYTES = 2 * 1024 * 1024  # Section 8.3's reference-response cap
-MAX_CONTRACTS = 10_000
-COLLECTION_WINDOW_SECONDS = 30
-CONNECT_TIMEOUT_SECONDS = 5.0
-RW_POOL_TIMEOUT_SECONDS = 10.0
-
-_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 # Confirmed live 2026-09-17: a whole-dollar price (e.g. AAPL at exactly
 # "$337") omits the decimal entirely -- the fractional part is optional,
 # not always present.
@@ -212,7 +212,7 @@ class NasdaqProvider:
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._client = client or httpx.Client(
             timeout=httpx.Timeout(RW_POOL_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
-            headers=_HEADERS,
+            headers=NASDAQ_HEADERS,
         )
 
     def close(self) -> None:
@@ -233,7 +233,7 @@ class NasdaqProvider:
         today = ny_local_date(collection_started_at)
         params_base = {
             "assetclass": asset_class,
-            "limit": PAGE_LIMIT,
+            "limit": CHAIN_PAGE_LIMIT,
             "fromdate": today.isoformat(),
             "todate": (today + timedelta(days=request.max_calendar_dte)).isoformat(),
             "excode": "oprac",
@@ -254,12 +254,12 @@ class NasdaqProvider:
         rows_seen_total = 0
         source_row_count = 0
 
-        for page_index in range(MAX_REQUESTS):
-            params = dict(params_base, offset=page_index * PAGE_LIMIT)
+        for page_index in range(CHAIN_MAX_REQUESTS):
+            params = dict(params_base, offset=page_index * CHAIN_PAGE_LIMIT)
             response = self._get(symbol, params)
             response_count += 1
             total_bytes += len(response.content)
-            if total_bytes > MAX_RESPONSE_BYTES:
+            if total_bytes > CHAIN_MAX_RESPONSE_BYTES:
                 raise ProviderError("INCOMPLETE_CHAIN", "Response size cap exceeded")
 
             body = self._parse_body(response)
@@ -351,7 +351,7 @@ class NasdaqProvider:
             # it to also match the verified totalRecord semantics (exact
             # row total, headers + data, identical on every page) so a
             # truncated/short response can't be mistaken for a complete one.
-            if len(page.rows) < PAGE_LIMIT:
+            if len(page.rows) < CHAIN_PAGE_LIMIT:
                 if rows_seen_total != total_record:
                     raise ProviderError(
                         "INCOMPLETE_CHAIN",
@@ -367,7 +367,7 @@ class NasdaqProvider:
             raise ProviderError("INVALID_UNDERLYING_PRICE", "Missing or invalid underlying price")
 
         contracts = tuple(by_key.values())
-        if len(contracts) > MAX_CONTRACTS:
+        if len(contracts) > CHAIN_MAX_CONTRACTS:
             raise ProviderError("INCOMPLETE_CHAIN", "Normalized contract cap exceeded")
 
         # VALUATION_TIME_ASSUMED is provider-independent (any provider whose
@@ -382,7 +382,7 @@ class NasdaqProvider:
             warnings.append("UNDERLYING_PRICE_CHANGED_DURING_COLLECTION")
 
         collected_at = datetime.now(UTC)
-        if (collected_at - collection_started_at).total_seconds() > COLLECTION_WINDOW_SECONDS:
+        if (collected_at - collection_started_at).total_seconds() > CHAIN_COLLECTION_WINDOW_SECONDS:
             raise ProviderError("COLLECTION_WINDOW_EXCEEDED", "Collection took too long")
 
         return ChainSnapshot(
@@ -404,7 +404,7 @@ class NasdaqProvider:
         )
 
     def _get(self, symbol: str, params: dict) -> httpx.Response:
-        return _http_get(self._client, BASE_URL.format(symbol=symbol), params)
+        return _http_get(self._client, NASDAQ_CHAIN_URL.format(symbol=symbol), params)
 
     def _parse_body(self, response: httpx.Response) -> dict:
         return _parse_json_envelope(response, schema_error_code="SCHEMA_ERROR", check_403=True)
@@ -461,7 +461,7 @@ class NasdaqDividendProvider:
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._client = client or httpx.Client(
             timeout=httpx.Timeout(RW_POOL_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
-            headers=_HEADERS,
+            headers=NASDAQ_HEADERS,
         )
 
     def close(self) -> None:
@@ -473,8 +473,9 @@ class NasdaqDividendProvider:
         if asset_class is None:
             raise ProviderError("UNSUPPORTED_SYMBOL", f"No Nasdaq dividend coverage for {symbol!r}")
 
-        response = _http_get(self._client, DIVIDENDS_URL.format(symbol=symbol), {"assetclass": asset_class})
-        if len(response.content) > MAX_REFERENCE_RESPONSE_BYTES:
+        url = NASDAQ_DIVIDENDS_URL.format(symbol=symbol)
+        response = _http_get(self._client, url, {"assetclass": asset_class})
+        if len(response.content) > REFERENCE_MAX_RESPONSE_BYTES:
             raise ProviderError("DIVIDEND_SCHEMA_ERROR", "Response exceeded the 2 MiB reference cap")
         body = _parse_json_envelope(response, schema_error_code="DIVIDEND_SCHEMA_ERROR", check_403=False)
 
@@ -512,7 +513,7 @@ class NasdaqDividendProvider:
                     declaration_date=_parse_mdy_date(row.get("declarationDate", "N/A")),
                     amount=_parse_dividend_amount(row["amount"]),
                     kind="ordinary_cash" if row.get("type") == "Cash" else "other",
-                    source_ref=DIVIDENDS_URL.format(symbol=symbol),
+                    source_ref=NASDAQ_DIVIDENDS_URL.format(symbol=symbol),
                 )
             )
 

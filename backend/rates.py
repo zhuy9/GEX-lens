@@ -10,13 +10,9 @@ from datetime import UTC, date, datetime
 
 import httpx
 
+from api import CONNECT_TIMEOUT_SECONDS, NYFED_SOFR_URL, REFERENCE_MAX_RESPONSE_BYTES, RW_POOL_TIMEOUT_SECONDS
 from models import RateBatch, RateObservation
 from provider import ProviderError
-
-BASE_URL = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/5.json"
-CONNECT_TIMEOUT_SECONDS = 5.0
-RW_POOL_TIMEOUT_SECONDS = 10.0
-MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # Section 8.3's 2 MiB reference-response cap
 
 
 def sofr_percent_to_rate_cc(percent_rate: float) -> float:
@@ -76,13 +72,13 @@ class NyFedSofrProvider:
 
     def fetch_rates(self) -> RateBatch:
         try:
-            response = self._client.get(BASE_URL)
+            response = self._client.get(NYFED_SOFR_URL)
         except httpx.TimeoutException as exc:
             raise ProviderError("UPSTREAM_TIMEOUT", str(exc)) from exc
         except httpx.HTTPError as exc:
             raise ProviderError("UPSTREAM_UNAVAILABLE", str(exc)) from exc
 
-        if len(response.content) > MAX_RESPONSE_BYTES:
+        if len(response.content) > REFERENCE_MAX_RESPONSE_BYTES:
             raise ProviderError("REFERENCE_RESPONSE_TOO_LARGE", "SOFR response exceeded the 2 MiB cap")
         if response.status_code == 429:
             raise ProviderError("UPSTREAM_RATE_LIMITED", "NY Fed rate limit")
@@ -103,7 +99,7 @@ class NyFedSofrProvider:
         return RateBatch(
             provider_id="nyfed_sofr",
             fetched_at=datetime.now(UTC),
-            source_ref=BASE_URL,
+            source_ref=NYFED_SOFR_URL,
             observations=observations,
             raw_payload_json=response.text,
         )

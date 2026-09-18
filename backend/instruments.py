@@ -9,7 +9,8 @@ actually supports, not a runtime preference.
 
 from typing import Literal, NamedTuple
 
-InstrumentClass = Literal["equity", "etf"]  # matches models.Instrument.instrument_class
+from models import InstrumentClass
+
 NasdaqAssetClass = Literal["etf", "stocks"]  # Nasdaq's own "assetclass" query param values
 
 

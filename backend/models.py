@@ -534,11 +534,14 @@ class ParametersV2(BaseModel):
     dividend_model: Literal["cash_schedule"] = "cash_schedule"
 
 
+InstrumentClass = Literal["equity", "etf"]
+
+
 class Instrument(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     symbol: str
-    instrument_class: Literal["equity", "etf"]
+    instrument_class: InstrumentClass
     currency: Literal["USD"] = "USD"
     exercise_style: Literal["american"] = "american"
     standard_multiplier: int = 100
