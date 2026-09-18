@@ -18,13 +18,6 @@ This is a personal research tool, not a trading system.
 
 ![GEX heatmap](docs/screenshots/gex-heatmap.png)
 
-## Status
-
-- PRD milestones M0-M5 are done:
-  [docs/m5-validation.md](docs/m5-validation.md).
-- ADR-0001 milestones M0-M6 are done:
-  [docs/adr-0001-validation.md](docs/adr-0001-validation.md).
-
 ## Stack
 
 - Frontend: React, TypeScript, Vite, shadcn/ui, Tailwind CSS v4, Plotly.js
