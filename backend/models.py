@@ -392,7 +392,9 @@ class ExpiryPricingContext(BaseModel):
     """One per in-scope expiration (Section 9.2): IV, gamma, model bounds,
     forward, and surface-side selection all consume this same context."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # protected_namespaces=(): model_spot is the ADR's own field name, not a
+    # pydantic ML-model convention pydantic would otherwise warn about.
+    model_config = ConfigDict(frozen=True, extra="forbid", protected_namespaces=())
 
     expiration: date
     valuation_at: datetime
@@ -517,7 +519,8 @@ class Parameters(BaseModel):
 
 
 class ParametersV2(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    # protected_namespaces=(): model_id is the ADR's own field name.
+    model_config = ConfigDict(frozen=True, extra="forbid", protected_namespaces=())
 
     r: float
     q: float

@@ -60,12 +60,33 @@ Open `http://127.0.0.1:5173` (proxies `/api` to the backend — start it first).
 cd backend
 pytest
 ruff check .
-ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py
+ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py market_inputs.py rates.py
 cd ..\frontend
 npm run lint
 npm run build
 npm test
 ```
+
+## Offline reconciliation
+
+`backend/reconcile.py` is a read-only diagnostic: it reruns one saved snapshot's
+normalized quotes under a scenario rate/dividend schedule and compares the result
+to what was actually saved. It is not a backtester or an HTTP endpoint, and it
+never fetches live data. **Stop the backend first** — it opens the same DuckDB
+file read-only, and a running server already holds its own connection to it.
+
+```powershell
+cd backend
+python reconcile.py --db data/options.duckdb `
+  --snapshot-id <uuid> `
+  --scenario-inputs reference_inputs.scenario.json `
+  --out exports/<uuid>-pricing-comparison
+```
+
+Writes `summary.md`, `contracts.csv`, `cells.csv`, and `inputs.json` to `--out`
+(refuses to overwrite a directory that already has a report). Exits non-zero
+with `BASELINE_REPRODUCTION_FAILED` if it cannot first reproduce the snapshot's
+own saved values — a discrepancy there is a bug, not a rate/dividend finding.
 
 ## Adding a data source
 
