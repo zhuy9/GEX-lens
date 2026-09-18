@@ -234,7 +234,10 @@ def validate_review_freshness(review: ScheduleReview, *, attempt_started_at: dat
 
 
 def _normalize_source_records(
-    records: tuple[DividendRecord, ...], valuation_at: datetime, symbol: str
+    records: tuple[DividendRecord, ...],
+    valuation_at: datetime,
+    symbol: str,
+    latest_in_scope_expiration: date | None,
 ) -> dict[date, DividendRecord]:
     """Section 7.2: exact duplicates collapse; conflicting non-null amounts
     for the same ex-date fail. Only ordinary_cash records are usable here --
@@ -242,9 +245,24 @@ def _normalize_source_records(
     A declaration date after valuation_at is information this application
     could not have had at valuation time; live refreshes must reject it,
     not silently price with foresight."""
+    valuation_date = ny_local_date(valuation_at)
     by_ex_date: dict[date, DividendRecord] = {}
     for record in records:
         if record.kind != "ordinary_cash":
+            # An unsupported distribution that is already past can never
+            # affect pricing and is safe to ignore. One that could still
+            # fall within a priced expiration is a potentially large,
+            # silent mispricing if simply dropped -- refuse instead of
+            # guessing that it doesn't matter.
+            if (
+                latest_in_scope_expiration is not None
+                and valuation_date <= record.ex_date <= latest_in_scope_expiration
+            ):
+                raise ProviderError(
+                    "DIVIDEND_DISTRIBUTION_UNSUPPORTED",
+                    f"{symbol}: unsupported distribution kind {record.kind!r} at ex-date "
+                    f"{record.ex_date} falls within the priced option horizon",
+                )
             continue
         # C03: a usable record must be verified for the requested security
         # and currency -- never priced as USD by assumption.

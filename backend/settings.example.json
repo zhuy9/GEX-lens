@@ -4,6 +4,10 @@
   "refresh_min_interval_seconds": 60,
   "pricing_model": "cash_pv_bsm_v2",
   "rate_source": "fixture",
-  "dividend_sources": {"SPY": "fixture", "QQQ": "fixture", "AAPL": "fixture"},
+  "dividend_sources": {
+    "SPY": "fixture",
+    "QQQ": "fixture",
+    "AAPL": "fixture"
+  },
   "reference_inputs_path": "reference_inputs.json"
 }
