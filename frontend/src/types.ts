@@ -167,6 +167,21 @@ export interface GexData {
 	cells: (GexCell | null)[][]; // [expiration_index][strike_index]
 }
 
+export interface PositioningProfile {
+	expiration: string;
+	dte: number;
+	call_wall_strike: string | null;
+	call_wall_oi: number | null;
+	put_wall_strike: string | null;
+	put_wall_oi: number | null;
+	call_gex_peak_strike: string | null;
+	call_gex_peak: number | null;
+	put_gex_peak_strike: string | null;
+	put_gex_peak: number | null;
+	max_pain_strike: string | null;
+	max_pain_payout: number | null;
+}
+
 export type SurfaceStatus = "READY" | "INSUFFICIENT_DATA";
 
 export interface SurfaceObservation {
@@ -228,6 +243,7 @@ export interface DashboardResponseV2 {
 	quality: QualityCounts;
 	gex: GexData;
 	surface: SurfaceData;
+	positioning: PositioningProfile[];
 	calculation_input_hash: string;
 }
 

@@ -12,11 +12,12 @@ from analytics import (
     bsm_gamma,
     bsm_price,
     build_gex,
+    build_positioning_profiles,
     build_surface,
     price_quote,
     solve_iv,
 )
-from models import OptionQuote, ny_local_date, year_fraction
+from models import OptionQuote, PricedQuote, ny_local_date, year_fraction
 
 VALUATION_AT = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -163,6 +164,28 @@ def test_zero_oi_yields_zero_exposure_even_without_iv():
     assert cell.call_exposure == 0.0
     assert cell.put_exposure is None
     assert cell.status == "INCOMPLETE"
+
+
+def test_positioning_profile_reports_walls_gex_peaks_and_max_pain():
+    quotes = (
+        make_quote(strike=Decimal("95"), option_type="C", open_interest=100),
+        make_quote(strike=Decimal("100"), option_type="C", open_interest=200),
+        make_quote(strike=Decimal("95"), option_type="P", open_interest=150),
+        make_quote(strike=Decimal("100"), option_type="P", open_interest=80),
+    )
+    priced = tuple(
+        PricedQuote(quote=quote, mid=1.0, iv=0.2, gamma=gamma, exclusion_reason=None)
+        for quote, gamma in zip(quotes, (0.01, 0.02, 0.03, 0.01), strict=True)
+    )
+
+    profile = build_positioning_profiles(priced, spot=100.0, valuation_at=VALUATION_AT)[0]
+
+    assert profile.call_wall_strike == Decimal("100")
+    assert profile.put_wall_strike == Decimal("95")
+    assert profile.call_gex_peak_strike == Decimal("100")
+    assert profile.put_gex_peak_strike == Decimal("95")
+    assert profile.max_pain_strike == Decimal("95")
+    assert profile.max_pain_payout == pytest.approx(40_000.0)
 
 
 def test_gex_exposure_formula_matches_reference_values():

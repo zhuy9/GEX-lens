@@ -32,6 +32,7 @@ from analytics import (
     REPRICE_TOLERANCE,
     analyze_snapshot_v2,
     build_expiry_pricing_context,
+    build_positioning_profiles,
 )
 from instruments import INSTRUMENTS
 from market_inputs import (
@@ -386,6 +387,7 @@ def _collect_and_save(
         max_strike_pct=MAX_STRIKE_PCT,
         source_row_count=snapshot.source_row_count,
     )
+    positioning = build_positioning_profiles(priced, snapshot.underlying_price, valuation_at)
 
     snapshot_id = uuid4()
     dashboard = DashboardResponseV2(
@@ -418,6 +420,7 @@ def _collect_and_save(
         quality=quality,
         gex=gex,
         surface=surface,
+        positioning=positioning,
         calculation_input_hash=_calculation_input_hash(
             contracts=snapshot.contracts,
             actual_spot=snapshot.underlying_price,

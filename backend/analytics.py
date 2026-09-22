@@ -14,6 +14,7 @@ from models import (
     GexCell,
     GexData,
     OptionQuote,
+    PositioningProfile,
     PricedQuote,
     QualityCounts,
     ResolvedDividend,
@@ -413,6 +414,81 @@ def build_gex(priced_quotes: tuple[PricedQuote, ...], spot: float) -> GexData:
     return GexData(
         strikes=tuple(strikes), expirations=tuple(expirations), cells=tuple(tuple(r) for r in cells)
     )
+
+
+def build_positioning_profiles(
+    priced_quotes: tuple[PricedQuote, ...], spot: float, valuation_at: datetime
+) -> tuple[PositioningProfile, ...]:
+    """Build transparent expiry-specific OI/GEX/max-pain reference levels.
+
+    OI walls use every in-scope quote with known OI. GEX peaks require a
+    priced gamma. Max pain uses the standard expiration intrinsic payout and
+    chooses the lowest strike when several strikes tie.
+    """
+    by_expiration: dict[date, list[PricedQuote]] = {}
+    for pq in priced_quotes:
+        if pq.exclusion_reason != "OUT_OF_SCOPE":
+            by_expiration.setdefault(pq.quote.expiration, []).append(pq)
+
+    profiles: list[PositioningProfile] = []
+    for expiration in sorted(by_expiration):
+        quotes = by_expiration[expiration]
+        calls = [pq for pq in quotes if pq.quote.option_type == "C"]
+        puts = [pq for pq in quotes if pq.quote.option_type == "P"]
+
+        def wall(rows: list[PricedQuote]) -> tuple[Decimal | None, int | None]:
+            usable = [pq for pq in rows if pq.quote.open_interest is not None]
+            if not usable:
+                return None, None
+            chosen = min(usable, key=lambda pq: (-pq.quote.open_interest, pq.quote.strike))
+            return chosen.quote.strike, chosen.quote.open_interest
+
+        def gex_peak(rows: list[PricedQuote]) -> tuple[Decimal | None, float | None]:
+            usable = [(pq, _exposure_for(pq, spot)) for pq in rows]
+            usable = [(pq, value) for pq, value in usable if value is not None]
+            if not usable:
+                return None, None
+            chosen = min(usable, key=lambda item: (-item[1], item[0].quote.strike))
+            return chosen[0].quote.strike, chosen[1]
+
+        call_wall_strike, call_wall_oi = wall(calls)
+        put_wall_strike, put_wall_oi = wall(puts)
+        call_gex_peak_strike, call_gex_peak_value = gex_peak(calls)
+        put_gex_peak_strike, put_gex_peak_value = gex_peak(puts)
+
+        strikes = sorted({pq.quote.strike for pq in quotes})
+        max_pain_strike: Decimal | None = None
+        max_pain_payout: float | None = None
+        if strikes and all(pq.quote.open_interest is not None for pq in quotes):
+            payouts = {
+                strike: sum(
+                    max(float(strike - pq.quote.strike), 0.0) * pq.quote.open_interest * 100
+                    if pq.quote.option_type == "C"
+                    else max(float(pq.quote.strike - strike), 0.0) * pq.quote.open_interest * 100
+                    for pq in quotes
+                )
+                for strike in strikes
+            }
+            max_pain_strike = min(payouts, key=lambda strike: (payouts[strike], strike))
+            max_pain_payout = payouts[max_pain_strike]
+
+        profiles.append(
+            PositioningProfile(
+                expiration=expiration,
+                dte=calendar_dte(expiration, valuation_at),
+                call_wall_strike=call_wall_strike,
+                call_wall_oi=call_wall_oi,
+                put_wall_strike=put_wall_strike,
+                put_wall_oi=put_wall_oi,
+                call_gex_peak_strike=call_gex_peak_strike,
+                call_gex_peak=call_gex_peak_value,
+                put_gex_peak_strike=put_gex_peak_strike,
+                put_gex_peak=put_gex_peak_value,
+                max_pain_strike=max_pain_strike,
+                max_pain_payout=max_pain_payout,
+            )
+        )
+    return tuple(profiles)
 
 
 def _piecewise_linear(xs: list[float], ws: list[float], x: float) -> float | None:

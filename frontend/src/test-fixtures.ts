@@ -179,6 +179,7 @@ export function makeDashboardV2(
 		quality: BASE_QUALITY,
 		gex: BASE_GEX,
 		surface: BASE_SURFACE,
+		positioning: [],
 		calculation_input_hash: "b".repeat(64),
 		...overrides,
 	};

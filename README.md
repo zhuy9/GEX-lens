@@ -9,6 +9,8 @@ it, saves it, and renders:
 - a strike-by-expiration GEX heatmap (call-minus-put proxy or gross, per 1% or
   per $1 move), and
 - a 3D IV surface with the observed points on top.
+- an expiry-specific positioning profile with raw OI walls, GEX peaks, and max
+  pain, defaulting to the nearest 1DTE expiration.
 
 Pricing uses a cash-dividend present-value Black-Scholes-Merton approximation
 (`cash_pv_bsm_v2`) with a SOFR-based rate and a reviewed dividend schedule. See

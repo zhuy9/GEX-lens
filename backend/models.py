@@ -635,6 +635,25 @@ class GexData(BaseModel):
     cells: tuple[tuple[GexCell | None, ...], ...]
 
 
+class PositioningProfile(BaseModel):
+    """Expiry-specific OI, GEX, and expiration-payoff reference levels."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    expiration: date
+    dte: int
+    call_wall_strike: Decimal | None
+    call_wall_oi: int | None
+    put_wall_strike: Decimal | None
+    put_wall_oi: int | None
+    call_gex_peak_strike: Decimal | None
+    call_gex_peak: float | None
+    put_gex_peak_strike: Decimal | None
+    put_gex_peak: float | None
+    max_pain_strike: Decimal | None
+    max_pain_payout: float | None
+
+
 class SurfaceObservation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -714,6 +733,7 @@ class DashboardResponseV2(BaseModel):
     gex: GexData
     surface: SurfaceData
     calculation_input_hash: str
+    positioning: tuple[PositioningProfile, ...] = ()
 
     @field_validator("collected_at", "valuation_at", "chain_asof", "spot_asof")
     @classmethod

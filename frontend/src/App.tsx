@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { ChartErrorBoundary } from "@/components/ChartErrorBoundary";
 import { GexHeatmap } from "@/components/GexHeatmap";
+import { PositioningProfile } from "@/components/PositioningProfile";
 import { PricingInputsPanel } from "@/components/PricingInputsPanel";
 import { PanelWarnings, SnapshotMeta } from "@/components/SnapshotMeta";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -177,6 +178,17 @@ export default function App() {
 
 			{dashboard && (
 				<>
+					{dashboard.schema_version === 2 && (
+						<Card>
+							<CardHeader>
+								<CardTitle>Expiration positioning</CardTitle>
+							</CardHeader>
+							<CardContent>
+								<PositioningProfile profiles={dashboard.positioning} />
+							</CardContent>
+						</Card>
+					)}
+
 					<Card>
 						<CardHeader>
 							<CardTitle>Snapshot</CardTitle>
