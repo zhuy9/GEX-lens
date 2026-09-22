@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PositioningProfile as PositioningProfileData } from "@/types";
 
 interface PositioningProfileProps {
-	profiles: PositioningProfileData[];
+	profiles?: PositioningProfileData[];
 }
 
 const EMPTY = "—";
@@ -38,7 +38,7 @@ function nearestOneDte(profiles: PositioningProfileData[]): string {
 	);
 }
 
-export function PositioningProfile({ profiles }: PositioningProfileProps) {
+export function PositioningProfile({ profiles = [] }: PositioningProfileProps) {
 	const defaultExpiration = useMemo(() => nearestOneDte(profiles), [profiles]);
 	const [expiration, setExpiration] = useState(defaultExpiration);
 	useEffect(() => setExpiration(defaultExpiration), [defaultExpiration]);

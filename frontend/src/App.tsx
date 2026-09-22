@@ -178,16 +178,17 @@ export default function App() {
 
 			{dashboard && (
 				<>
-					{dashboard.schema_version === 2 && (
-						<Card>
-							<CardHeader>
-								<CardTitle>Expiration positioning</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<PositioningProfile profiles={dashboard.positioning} />
-							</CardContent>
-						</Card>
-					)}
+					{dashboard.schema_version === 2 &&
+						dashboard.positioning?.length > 0 && (
+							<Card>
+								<CardHeader>
+									<CardTitle>Expiration positioning</CardTitle>
+								</CardHeader>
+								<CardContent>
+									<PositioningProfile profiles={dashboard.positioning} />
+								</CardContent>
+							</Card>
+						)}
 
 					<Card>
 						<CardHeader>

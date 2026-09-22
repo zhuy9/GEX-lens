@@ -35,6 +35,11 @@ const profiles = [
 ];
 
 describe("PositioningProfile", () => {
+	it("renders nothing when an older snapshot has no positioning data", () => {
+		const { container } = render(<PositioningProfile />);
+		expect(container).toBeEmptyDOMElement();
+	});
+
 	it("defaults to 1DTE and switches expiration", async () => {
 		const user = userEvent.setup();
 		render(<PositioningProfile profiles={profiles} />);
