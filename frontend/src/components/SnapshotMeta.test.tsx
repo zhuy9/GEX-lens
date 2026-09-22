@@ -20,6 +20,15 @@ describe("ADR-0001 9.5: required model disclosures", () => {
 		).toBeInTheDocument();
 	});
 
+	it("keeps warnings collapsed so they do not push the charts down", () => {
+		const dashboard = makeDashboardV2({
+			warnings: ["MULTIPLIER_ASSUMED", "TIMESTAMP_ALIGNMENT_UNKNOWN"],
+		});
+		render(<SnapshotMeta dashboard={dashboard} offsetMs={0} tick={0} />);
+		const details = screen.getByText("Warnings (2)").closest("details");
+		expect(details).not.toHaveAttribute("open");
+	});
+
 	it("shows the near-ex-date warning text for NEAR_EX_DIVIDEND, not just the raw code", () => {
 		const dashboard = makeDashboardV2({ warnings: ["NEAR_EX_DIVIDEND"] });
 		render(<SnapshotMeta dashboard={dashboard} offsetMs={0} tick={0} />);

@@ -1,4 +1,4 @@
-import { AlertTriangle, Info } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { ageSeconds } from "@/lib/time";
@@ -32,6 +32,8 @@ const WARNING_TEXT: Record<string, string> = {
 		"A source-reported amount replaced an earlier estimate for at least one event.",
 	DIVIDEND_AMOUNT_ESTIMATED:
 		"At least one event's amount is an estimate, not a source-confirmed figure.",
+	FLAT_OVERNIGHT_RATE_PROXY:
+		"SOFR is used as a flat overnight rate proxy, not a term curve.",
 };
 
 export function formatTimestamp(value: string | null): string {
@@ -140,23 +142,22 @@ export function SnapshotMeta({ dashboard, offsetMs, tick }: SnapshotMetaProps) {
 			</dl>
 
 			{dashboard.warnings.length > 0 && (
-				<div className="flex flex-col gap-1">
-					{dashboard.warnings.map((code) => (
-						<Alert key={code}>
-							<AlertTriangle className="h-4 w-4" />
-							<AlertDescription>{WARNING_TEXT[code] ?? code}</AlertDescription>
-						</Alert>
-					))}
-				</div>
+				<details className="text-xs">
+					<summary className="cursor-pointer text-muted-foreground">
+						Warnings ({dashboard.warnings.length})
+					</summary>
+					<ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
+						{dashboard.warnings.map((code) => (
+							<li key={code}>{WARNING_TEXT[code] ?? code}</li>
+						))}
+					</ul>
+				</details>
 			)}
 
-			<Alert>
-				<Info className="h-4 w-4" />
-				<AlertDescription>
-					BSM approximation. OI does not identify dealer positions. Surface
-					interpolation is not arbitrage-free calibration.
-				</AlertDescription>
-			</Alert>
+			<p className="text-xs text-muted-foreground">
+				BSM approximation; OI does not identify dealer positions; surface
+				interpolation is not arbitrage-free calibration.
+			</p>
 		</div>
 	);
 }
