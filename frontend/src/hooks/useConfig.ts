@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { errorMessage, getConfig } from "@/api";
 import { clockOffsetMs } from "@/lib/time";
 import type { ConfigResponse } from "@/types";
@@ -25,14 +25,18 @@ export function useConfig(): UseConfigResult {
 	const [config, setConfig] = useState<ConfigResponse | null>(null);
 	const [serverOffsetMs, setServerOffsetMs] = useState(0);
 	const [configError, setConfigError] = useState<string | null>(null);
+	const generationRef = useRef(0);
 
 	const reload = useCallback(async () => {
+		const generation = ++generationRef.current;
 		try {
 			const result = await getConfig();
+			if (generation !== generationRef.current) return;
 			setConfig(result);
 			setServerOffsetMs(clockOffsetMs(result.server_time));
 			setConfigError(null);
 		} catch (error) {
+			if (generation !== generationRef.current) return;
 			// PRD 11.3: "if it fails, retain the existing local cooldown and allow
 			// a later manual attempt" -- leave prior config/offset state
 			// untouched, but surface the failure instead of leaving the caller

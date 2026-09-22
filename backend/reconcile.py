@@ -18,6 +18,7 @@ import json
 import math
 import sys
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -192,8 +193,7 @@ class SavedSnapshot:
 
 
 def _load_snapshot(db_path: str, snapshot_id: uuid.UUID) -> SavedSnapshot:
-    conn = duckdb.connect(db_path, read_only=True)
-    try:
+    with closing(duckdb.connect(db_path, read_only=True)) as conn:
         row = conn.execute(
             "SELECT symbol, source_mode, collected_at, valuation_at, dashboard_json "
             "FROM snapshots WHERE snapshot_id = ?",
@@ -213,8 +213,6 @@ def _load_snapshot(db_path: str, snapshot_id: uuid.UUID) -> SavedSnapshot:
             """,
             [snapshot_id],
         ).fetchall()
-    finally:
-        conn.close()
 
     contracts = []
     saved_priced = {}
@@ -632,11 +630,11 @@ def _write_inputs_json(
         "original": {
             "rate_cc_or_r": original_r,
             "q": original_q,
-            "dividend_events": [json.loads(e.model_dump_json()) for e in original_events],
+            "dividend_events": [e.model_dump(mode="json") for e in original_events],
         },
         "scenario": {
             "rate_cc": scenario_r,
-            "dividend_events": [json.loads(e.model_dump_json()) for e in scenario_events],
+            "dividend_events": [e.model_dump(mode="json") for e in scenario_events],
         },
         "label": "counterfactual sensitivity, not a historical trading backtest",
         "known_after_valuation": known_after_valuation,

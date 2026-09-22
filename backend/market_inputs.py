@@ -10,6 +10,8 @@ import json
 from datetime import date, datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 import storage
 from models import (
     DividendFeedSnapshot,
@@ -47,7 +49,7 @@ def load_local_reference_inputs(path: Path) -> LocalReferenceInputs:
         raise ProviderError("REFERENCE_INPUT_FILE_INVALID", f"Malformed JSON in {path}: {exc}") from exc
     try:
         return LocalReferenceInputs.model_validate(raw)
-    except Exception as exc:  # pydantic.ValidationError, kept generic: no pydantic import needed here
+    except ValidationError as exc:
         raise ProviderError("REFERENCE_INPUT_FILE_INVALID", f"Invalid {path}: {exc}") from exc
 
 
@@ -371,24 +373,15 @@ def _resolve_one_event(
         )
 
     owner_amount = event.amount
-    if event.amount_status == "estimated" and owner_amount is not None:
-        warnings.append("DIVIDEND_AMOUNT_ESTIMATED")
+    if owner_amount is not None:
+        if event.amount_status == "estimated":
+            warnings.append("DIVIDEND_AMOUNT_ESTIMATED")
         return ResolvedDividend(
             event_id=event.event_id,
             ex_date=event.ex_date,
             payment_date=event.payment_date,
             amount=owner_amount,
-            amount_status="estimated",
-            source_ref=event.source_ref,
-            source_provider_id="owner_review",
-        )
-    if event.amount_status == "declared" and owner_amount is not None:
-        return ResolvedDividend(
-            event_id=event.event_id,
-            ex_date=event.ex_date,
-            payment_date=event.payment_date,
-            amount=owner_amount,
-            amount_status="owner_declared",
+            amount_status="owner_declared" if event.amount_status == "declared" else "estimated",
             source_ref=event.source_ref,
             source_provider_id="owner_review",
         )

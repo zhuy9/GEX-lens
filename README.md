@@ -16,6 +16,11 @@ Pricing uses a cash-dividend present-value Black-Scholes-Merton approximation
 
 This is a personal research tool, not a trading system.
 
+The current implementation requests and prices 1–30 calendar DTE. The product
+documents describe the intended 1–60 DTE scope; extending the live request back
+to 60 days should be treated as a measured performance change, not a config-only
+edit.
+
 ![GEX heatmap](docs/screenshots/gex-heatmap.png)
 
 ## Stack
@@ -153,8 +158,8 @@ All values below are synthetic:
   source.
   - `reviewed_at` must be 0-7 days old (New York dates) when you refresh.
   - `coverage_start` must be on or before the valuation date.
-  - `coverage_end` must be on or after the latest in-scope expiration (about
-    60 days out).
+  - `coverage_end` must be on or after the latest in-scope expiration (up to 30
+    days in the current implementation).
   - `no_other_events_expected` must be `true`.
   - An empty `expected_events` list means "no dividends expected in this
     window".

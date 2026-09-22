@@ -64,20 +64,13 @@ def _parse_num(raw: object) -> float | None:
         return None
 
 
-def _parse_int(raw: object) -> int | None:
-    value = _parse_num(raw)
-    return None if value is None else int(value)
-
-
 def _parse_count(raw: object) -> tuple[int | None, bool]:
     """Nonnegative whole-number count (OI/volume). Returns (value, invalid).
 
     A recognized missing sentinel is (None, False). A malformed value --
     fractional, negative, NaN, Infinity, or otherwise unparseable -- is
     (None, True): the source sent something wrong, not merely nothing.
-    Callers must not silently truncate a count through float/int like
-    _parse_int does; "0.9" truncating to 0 turns an invalid reading into a
-    confident (and misleading) zero exposure.
+    Never truncate fractional counts into a misleading zero exposure.
     """
     if raw is None:
         return None, False
@@ -192,8 +185,8 @@ def _parse_page(body: dict) -> _PageResult:
     rows = table.get("rows")
     if not isinstance(rows, list):
         raise ProviderError("SCHEMA_ERROR", "'data.table.rows' is missing or not a list")
-    total_record = _parse_int(data.get("totalRecord"))
-    if total_record is None or total_record < 0:
+    total_record, _ = _parse_count(data.get("totalRecord"))
+    if total_record is None:
         raise ProviderError("SCHEMA_ERROR", "Missing or invalid 'data.totalRecord'")
     return _PageResult(
         last_trade_raw=data.get("lastTrade"),
@@ -303,7 +296,7 @@ class NasdaqProvider:
                     price_changed = True
 
             rows_seen_total += len(page.rows)
-            keys_before = set(by_key.keys())
+            count_before = len(by_key)
             saw_data_row = False
             for row in page.rows:
                 if row.get("expirygroup"):
@@ -360,7 +353,7 @@ class NasdaqProvider:
                         continue
                     by_key[key] = quote
 
-            if saw_data_row and set(by_key.keys()) == keys_before:
+            if saw_data_row and len(by_key) == count_before:
                 raise ProviderError("INCOMPLETE_CHAIN", "Pagination page repeated without progress")
 
             # A short page ends pagination; confirmed empirically against a

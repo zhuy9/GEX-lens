@@ -117,40 +117,28 @@ def _bulk_insert_option_quotes(
 
 def init_schema(db_path: str) -> None:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    with _LOCK:
-        conn = duckdb.connect(db_path)
-        try:
-            conn.execute(_SCHEMA_SQL)
-        finally:
-            conn.close()
+    with _LOCK, contextlib.closing(duckdb.connect(db_path)) as conn:
+        conn.execute(_SCHEMA_SQL)
 
 
 def health_check(db_path: str) -> None:
     """Confirm the database is reachable without decoding an analytical
     snapshot -- a health check has no reason to pay that cost."""
-    with _LOCK:
-        conn = duckdb.connect(db_path)
-        try:
-            conn.execute("SELECT 1")
-        finally:
-            conn.close()
+    with _LOCK, contextlib.closing(duckdb.connect(db_path)) as conn:
+        conn.execute("SELECT 1")
 
 
 def get_latest_dashboard(db_path: str, source_mode: str, symbol: str) -> dict | None:
-    with _LOCK:
-        conn = duckdb.connect(db_path)
-        try:
-            row = conn.execute(
-                """
-                SELECT dashboard_json FROM snapshots
-                WHERE source_mode = ? AND symbol = ?
-                ORDER BY collected_at DESC, snapshot_id DESC
-                LIMIT 1
-                """,
-                [source_mode, symbol],
-            ).fetchone()
-        finally:
-            conn.close()
+    with _LOCK, contextlib.closing(duckdb.connect(db_path)) as conn:
+        row = conn.execute(
+            """
+            SELECT dashboard_json FROM snapshots
+            WHERE source_mode = ? AND symbol = ?
+            ORDER BY collected_at DESC, snapshot_id DESC
+            LIMIT 1
+            """,
+            [source_mode, symbol],
+        ).fetchone()
     return None if row is None else json.loads(row[0])
 
 
@@ -160,18 +148,14 @@ def get_reference_cache(
     """Latest cached fetch for this (kind, provider_id, subject), or None.
     The cache is an optimization (Section 8.1): callers decide TTL eligibility
     themselves from the returned fetched_at."""
-    with _LOCK:
-        conn = duckdb.connect(db_path)
-        try:
-            row = conn.execute(
-                """
-                SELECT fetched_at, normalized_json, raw_payload_json FROM reference_cache
-                WHERE kind = ? AND provider_id = ? AND subject = ?
-                """,
-                [kind, provider_id, subject],
-            ).fetchone()
-        finally:
-            conn.close()
+    with _LOCK, contextlib.closing(duckdb.connect(db_path)) as conn:
+        row = conn.execute(
+            """
+            SELECT fetched_at, normalized_json, raw_payload_json FROM reference_cache
+            WHERE kind = ? AND provider_id = ? AND subject = ?
+            """,
+            [kind, provider_id, subject],
+        ).fetchone()
     if row is None:
         return None
     fetched_at, normalized_json, raw_payload_json = row
@@ -194,19 +178,15 @@ def upsert_reference_cache(
 ) -> None:
     """Replace this (kind, provider_id, subject)'s cached entry. Never
     called on a failed fetch, so a prior successful entry survives one."""
-    with _LOCK:
-        conn = duckdb.connect(db_path)
-        try:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO reference_cache
-                    (kind, provider_id, subject, fetched_at, normalized_json, raw_payload_json)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                [kind, provider_id, subject, fetched_at, json.dumps(normalized_json), raw_payload_json],
-            )
-        finally:
-            conn.close()
+    with _LOCK, contextlib.closing(duckdb.connect(db_path)) as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO reference_cache
+                (kind, provider_id, subject, fetched_at, normalized_json, raw_payload_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [kind, provider_id, subject, fetched_at, json.dumps(normalized_json), raw_payload_json],
+        )
 
 
 def save_snapshot(
@@ -223,8 +203,7 @@ def save_snapshot(
 ) -> None:
     """Insert one snapshot and its contracts, then prune to the newest
     _KEEP_LATEST for this (source_mode, symbol) pair, all in one transaction."""
-    with _LOCK:
-        conn = duckdb.connect(db_path)
+    with _LOCK, contextlib.closing(duckdb.connect(db_path)) as conn:
         try:
             conn.execute("BEGIN TRANSACTION")
             conn.execute(
@@ -269,5 +248,3 @@ def save_snapshot(
         except Exception:
             conn.execute("ROLLBACK")
             raise
-        finally:
-            conn.close()

@@ -10,6 +10,7 @@ docs/samples/
 
 # Data and databases
 data/
+exports/
 *.duckdb
 *.duckdb.wal
 

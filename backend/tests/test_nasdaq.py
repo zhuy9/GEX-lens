@@ -88,6 +88,16 @@ def make_provider(handler) -> nasdaq.NasdaqProvider:
     return nasdaq.NasdaqProvider(client=httpx.Client(transport=transport))
 
 
+@pytest.mark.parametrize("total", ["NaN", "Infinity", "0.9", "-1", True])
+def test_invalid_total_record_is_a_schema_error(total):
+    provider = make_provider(lambda _: httpx.Response(
+        200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", [], total_record=total)
+    ))
+    with pytest.raises(ProviderError) as error:
+        provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert error.value.code == "SCHEMA_ERROR"
+
+
 def test_single_page_parses_spot_and_contracts():
     rows = [
         _header_row("January 15, 2026"),

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { ChartErrorBoundary } from "@/components/ChartErrorBoundary";
 import { GexHeatmap } from "@/components/GexHeatmap";
 import { PricingInputsPanel } from "@/components/PricingInputsPanel";
@@ -19,7 +19,7 @@ import { useConfig } from "@/hooks/useConfig";
 import { useDashboard } from "@/hooks/useDashboard";
 import { useTick } from "@/hooks/useTick";
 import { secondsUntil } from "@/lib/time";
-import type { GexMode, MoveUnit } from "@/types";
+import type { DashboardResponse, GexMode, MoveUnit } from "@/types";
 
 // Only this panel needs Plotly; the GEX heatmap is a plain HTML table. The
 // production build is a single ~5MB (~1.5MB gzipped) bundle dominated by
@@ -41,14 +41,6 @@ export default function App() {
 	const [moveUnit, setMoveUnit] = useState<MoveUnit>("per_1pct");
 	const tick = useTick();
 
-	// Returned (not fire-and-forgotten) so useDashboard can stay "refreshing"
-	// until this reconciliation GET actually lands (R04): otherwise the
-	// button re-enables before the updated cooldown is reflected.
-	const handleRefreshSettled = useCallback(
-		() => reloadConfig(),
-		[reloadConfig],
-	);
-
 	const {
 		dashboard,
 		status,
@@ -57,7 +49,7 @@ export default function App() {
 		refreshError,
 		refresh,
 		retryLoad,
-	} = useDashboard(symbol ?? "", handleRefreshSettled);
+	} = useDashboard(symbol ?? "", reloadConfig);
 
 	// Open/reload: config resolves the default symbol once, which then
 	// triggers useDashboard's own effect (PRD 11.3's "GET config, then GET
@@ -246,24 +238,7 @@ export default function App() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle className="flex flex-wrap items-center gap-2">
-								<span>
-									{dashboard.symbol} GEX Heatmap{" "}
-									<span className="font-normal text-muted-foreground">
-										·{" "}
-										{dashboard.schema_version === 2
-											? `${dashboard.instrument.instrument_class} · `
-											: ""}
-										0DTE excluded
-									</span>
-								</span>
-								{dashboard.schema_version === 2 && (
-									<Badge variant="secondary">
-										{dashboard.parameters.model_id}
-									</Badge>
-								)}
-								<PanelWarnings warnings={dashboard.warnings} />
-							</CardTitle>
+							<ChartTitle dashboard={dashboard} title="GEX Heatmap" />
 						</CardHeader>
 						<CardContent>
 							<ChartErrorBoundary resetKey={dashboard.snapshot_id}>
@@ -280,24 +255,10 @@ export default function App() {
 
 					<Card>
 						<CardHeader>
-							<CardTitle className="flex flex-wrap items-center gap-2">
-								<span>
-									{dashboard.symbol} Implied Volatility Surface{" "}
-									<span className="font-normal text-muted-foreground">
-										·{" "}
-										{dashboard.schema_version === 2
-											? `${dashboard.instrument.instrument_class} · `
-											: ""}
-										0DTE excluded
-									</span>
-								</span>
-								{dashboard.schema_version === 2 && (
-									<Badge variant="secondary">
-										{dashboard.parameters.model_id}
-									</Badge>
-								)}
-								<PanelWarnings warnings={dashboard.warnings} />
-							</CardTitle>
+							<ChartTitle
+								dashboard={dashboard}
+								title="Implied Volatility Surface"
+							/>
 						</CardHeader>
 						<CardContent className="h-96">
 							<ChartErrorBoundary
@@ -313,5 +274,32 @@ export default function App() {
 				</>
 			)}
 		</div>
+	);
+}
+
+function ChartTitle({
+	dashboard,
+	title,
+}: {
+	dashboard: DashboardResponse;
+	title: string;
+}) {
+	return (
+		<CardTitle className="flex flex-wrap items-center gap-2">
+			<span>
+				{dashboard.symbol} {title}{" "}
+				<span className="font-normal text-muted-foreground">
+					·{" "}
+					{dashboard.schema_version === 2
+						? `${dashboard.instrument.instrument_class} · `
+						: ""}
+					0DTE excluded
+				</span>
+			</span>
+			{dashboard.schema_version === 2 && (
+				<Badge variant="secondary">{dashboard.parameters.model_id}</Badge>
+			)}
+			<PanelWarnings warnings={dashboard.warnings} />
+		</CardTitle>
 	);
 }

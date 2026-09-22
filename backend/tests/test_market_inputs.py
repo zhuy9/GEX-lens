@@ -26,6 +26,18 @@ VALUATION_AT = datetime(2026, 1, 10, 15, 0, tzinfo=UTC)  # NY-local Jan 10
 ATTEMPT_AT = VALUATION_AT
 
 
+def test_reference_input_loader_does_not_hide_programming_errors(tmp_path, monkeypatch):
+    path = tmp_path / "inputs.json"
+    path.write_text("{}")
+
+    def fail(_):
+        raise RuntimeError("validator bug")
+
+    monkeypatch.setattr(market_inputs.LocalReferenceInputs, "model_validate", fail)
+    with pytest.raises(RuntimeError, match="validator bug"):
+        market_inputs.load_local_reference_inputs(path)
+
+
 def _review(
     expected_events=(),
     reviewed_at=VALUATION_AT,
