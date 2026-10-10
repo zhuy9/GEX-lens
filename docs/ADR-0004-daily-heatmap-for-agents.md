@@ -14,7 +14,11 @@ privately.
 
 - Add `scripts/daily_heatmap.py`. One command fetches SPY and QQQ and writes
   `exports/heatmap.html` (git-ignored): one fixed-width page, one section per
-  symbol, built for a screenshot. It also prints a short text summary.
+  symbol, built for a screenshot. It also prints the key numbers (net GEX
+  near spot, biggest strikes, walls, biggest expirations) so the agent quotes
+  exact values instead of reading them off the image.
+- `docs/interpret-heatmap.md` explains how to read the heatmap, with sources,
+  and gives the agent a daily summary template.
 - The script calls the backend's own refresh code (`app._collect_and_save`)
   with its own temporary settings and database. The math is the same as the
   app's. It does not read or change `backend/settings.json`, the local

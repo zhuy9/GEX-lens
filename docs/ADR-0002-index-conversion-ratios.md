@@ -21,6 +21,10 @@ QQQ strike, on the GEX heatmap's strike axis and spot row.
 
 ## PRD/ADR-0001 provisions overridden
 
+- ADR-0001 Section 10 "No SPY-to-SPX strike rescaling, relabeling, or inferred
+  index equivalence": the heatmap may show an index level next to each
+  SPY/QQQ strike, labeled as an approximation with its ratio and as-of time.
+  The strike itself and all calculations stay in ETF terms.
 - PRD section 1 "background collection" / "additional live data providers":
   allowed for this one scheduled, ratio-only Yahoo fetch.
 - PRD section 4 / ADR-0001 section 4 module layout: adds

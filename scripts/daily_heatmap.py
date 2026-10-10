@@ -177,18 +177,60 @@ Made {datetime.now(NY).strftime("%b %d, %Y %I:%M %p ET")}. Research only, not ad
 """
 
 
+def summary(d: dict, conversion: dict | None) -> list[str]:
+    """Plain-text facts for the daily summary (docs/interpret-heatmap.md).
+
+    Covers every strike and expiration in the snapshot (1-30 days), not only
+    the window drawn on the page.
+    """
+    gex, spot = d["gex"], d["spot"]
+    by_strike: dict[str, float] = {}
+    by_expiration: dict[str, float] = {}
+    for e, expiration in enumerate(gex["expirations"]):
+        for s, strike in enumerate(gex["strikes"]):
+            cell = gex["cells"][e][s]
+            if cell and cell["signed_proxy"] is not None:
+                by_strike[strike] = by_strike.get(strike, 0) + cell["signed_proxy"]
+            if cell and cell["gross_exposure"] is not None:
+                by_expiration[expiration] = by_expiration.get(expiration, 0) + cell["gross_exposure"]
+
+    def where(strike: str) -> str:
+        pct = (float(strike) / spot - 1) * 100
+        index = f"~{conversion['index']} {float(strike) * conversion['ratio']:,.0f}, " if conversion else ""
+        return f"{strike_label(strike)} ({index}{pct:+.1f}%)"
+
+    ranked = sorted(by_strike.items(), key=lambda kv: kv[1])
+    near = [v for k, v in by_strike.items() if abs(float(k) / spot - 1) <= 0.02]
+    p0 = d["positioning"][0] if d["positioning"] else {}
+    walls = ", ".join(f"{name} {where(p0[key])}" if p0.get(key) else f"{name} n/a" for name, key in LEVELS)
+    dte = {p["expiration"]: p["dte"] for p in d["positioning"]}
+    return [
+        f"{d['symbol']}: spot ${spot:.2f}"
+        + (f" (~{conversion['index']} {spot * conversion['ratio']:,.2f})" if conversion else ""),
+        f"  data: {as_of(d)}",
+        f"  net GEX, all strikes: {money(sum(by_strike.values()))}; within 2% of spot: {money(sum(near))}",
+        "  biggest positive strikes: "
+        + "; ".join(f"{where(k)}: {money(v)}" for k, v in ranked[::-1][:3] if v > 0),
+        "  biggest negative strikes: " + "; ".join(f"{where(k)}: {money(v)}" for k, v in ranked[:3] if v < 0),
+        f"  nearest expiration {p0.get('expiration', 'n/a')}: {walls}",
+        "  largest expirations by gross GEX: "
+        + "; ".join(
+            f"{e} ({dte.get(e, '?')}d): {money(v)}"
+            for e, v in sorted(by_expiration.items(), key=lambda kv: -kv[1])[:3]
+        ),
+    ]
+
+
 def main() -> None:
     fixture = "--fixture" in sys.argv[1:]
     data = fetch(fixture)
     conversions = json.loads((ROOT / "reference/conversion_ratios.json").read_text())["ratios"]
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(page(data, conversions, fixture))
+    if fixture:
+        print("SYNTHETIC FIXTURE DATA -- not real prices")
     for symbol in SYMBOLS:
-        p0 = data[symbol]["positioning"][0] if data[symbol]["positioning"] else {}
-        print(
-            f"{symbol}: spot ${data[symbol]['spot']:.2f}, call wall {p0.get('call_wall_strike')}, "
-            f"put wall {p0.get('put_wall_strike')}, {as_of(data[symbol])}"
-        )
+        print("\n".join(summary(data[symbol], conversions.get(symbol))))
     print(f"Heatmap page: {OUT}")
 
 
