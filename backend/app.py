@@ -61,7 +61,7 @@ from models import (
 from provider import DividendDataProvider, OptionsDataProvider, ProviderError, RateDataProvider
 
 MIN_CALENDAR_DTE = 1
-MAX_CALENDAR_DTE = 60  # PRD scope; measured 2026-10-09: same 2 Nasdaq pages, ~0.2s processing
+MAX_CALENDAR_DTE = 30  # owner choice (PRD allows 60); do not raise without asking, see CLAUDE.md
 # ADR-0003: written daily by .github/workflows/reference-update.yml.
 AUTO_SCHEDULES_PATH = Path(__file__).resolve().parent.parent / "reference/dividend_schedules.json"
 MIN_STRIKE_PCT = 0.80

@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 import yfinance as yf
 
 OUT = Path(__file__).resolve().parents[1] / "reference/dividend_schedules.json"
-COVERAGE_DAYS = 75  # > MAX_CALENDAR_DTE (60); < 91-day quarterly spacing, so <= 1 event
+COVERAGE_DAYS = 45  # > MAX_CALENDAR_DTE (30); quarterly spacing means <= 1 event
 
 
 def third_friday(year: int, month: int) -> date:

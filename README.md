@@ -13,8 +13,9 @@ fetches one option-chain snapshot, prices it, saves it, and shows:
 - the gamma regime: positive or negative gamma, the gamma flip, and vanna
   exposure (VEX).
 
-It covers expirations 1-60 days out. Pricing is a Black-Scholes-Merton model
-with cash dividends and a SOFR rate
+It covers expirations 1-30 days out (a deliberate choice; the PRD allows up
+to 60). Pricing is a Black-Scholes-Merton model with cash dividends and a
+SOFR rate
 ([ADR-0001](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)).
 This is a personal research tool, not a trading system.
 
@@ -176,7 +177,7 @@ Main rules (full rules: ADR-0001 Sections 5.2 and 7):
 
 - `reviewed_at` must be 0-7 days old. Timestamps need a timezone.
 - Coverage must start on or before today and end on or after the last
-  expiration in use (up to 60 days out).
+  expiration in use (up to 30 days out).
 - An empty `expected_events` list means "no dividends in this window".
 - `amount_status` is `"declared"` or `"estimated"` (with an amount), or
   `"pending_source"` (amount `null`, only with `"nasdaq_dividends"`).

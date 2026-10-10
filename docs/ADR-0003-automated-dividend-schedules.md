@@ -13,10 +13,9 @@ quarterly calendar, amount = last actual), so re-typing it weekly is pure toil.
 - `.github/workflows/reference-update.yml` (weekdays 22:00 UTC) runs
   `scripts/update_dividends.py`, which reads Yahoo dividend history (yfinance)
   and writes `reference/dividend_schedules.json` in the `reference_inputs.json`
-  format: coverage today..today+75d (longer than the 60-day expiration scope),
-  any projected ex-date in it with the last actual amount, `amount_status:
-  "estimated"`, `reviewed_at` = run time, `source_refs:
-  ["auto:update_dividends.py:..."]`.
+  format: coverage today..today+45d, any projected ex-date in it with the last
+  actual amount, `amount_status: "estimated"`, `reviewed_at` = run time,
+  `source_refs: ["auto:update_dividends.py:..."]`.
 - Projection: SPY ex-date = third Friday of Mar/Jun/Sep/Dec (Thursday when
   that is Juneteenth); QQQ = the following Monday. The script first checks
   the rule against Yahoo's last four ex-dates and fails without writing on

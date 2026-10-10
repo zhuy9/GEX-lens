@@ -56,7 +56,7 @@ How to read the output:
 
 - IV is held fixed while spot moves. In a real sell-off IV usually rises,
   so the true flip can differ.
-- Only expirations 1-60 days out are counted (no 0DTE, nothing longer), so
+- Only expirations 1-30 days out are counted (no 0DTE, nothing longer), so
   values will not match vendors such as SpotGamma.
 - Same positioning assumption as GEX (investors sell calls and buy puts).
   Open interest does not show who is long or short.

@@ -78,6 +78,10 @@ and ADR-0001 Section 4/4.2 for the exact allowed import graph.
   `OptionsDataProvider` Protocol. `fixtures.py` must never import `nasdaq.py`,
   and vice versa. PRD section 4.4 lists the required boundary tests.
 - Manual refresh only: no polling, no auto-refresh on focus/reconnect/interval.
+- Expiration scope is 1-30 DTE (`MAX_CALENDAR_DTE` in `app.py`). This is the
+  owner's deliberate choice and overrides the PRD's 1-60. Do not raise it
+  without the owner asking; the dividend schedule coverage (45 days in
+  `scripts/update_dividends.py`) is sized to it.
 - `settings.json` is local config (holds `pricing_model`, `rate_source`,
   `dividend_sources`, `reference_inputs_path`, `db_path`, etc. — ADR-0001
   Section 5.2 replaced the old `risk_free_rate`/`dividend_yields` keys) and
