@@ -25,6 +25,49 @@ edit.
 
 ![GEX heatmap](docs/screenshots/gex-heatmap.png)
 
+## For AI agents (Muse): get today's SPY and QQQ heatmap
+
+If someone gives you this repo and asks for "today's heatmap", follow these
+steps. You only need Python 3.12 (no Node.js, no servers).
+
+```bash
+git clone https://github.com/zhuy9/GEX-lens.git
+cd GEX-lens/backend
+python3.12 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python ../scripts/daily_heatmap.py
+```
+
+1. The script prints a short text summary (spot, call wall, put wall) and the
+   path of the page it made: `exports/heatmap.html`.
+2. Open that file in a browser with a window about 1100 px wide and take a
+   full-page screenshot. Each symbol is its own section (`#spy`, `#qqq`) if
+   you want two images.
+3. Send the screenshot and the text summary to the user.
+
+Rules:
+
+- Run it once per day at most, and never in a loop. It makes about 4 requests
+  to Nasdaq and 1 to the New York Fed.
+- If it fails with `UPSTREAM_ACCESS_DENIED` or `UPSTREAM_RATE_LIMITED`, Nasdaq
+  blocked the request. Tell the user. Do not retry.
+- If it fails with `DIVIDEND_REVIEW_REQUIRED`, the daily
+  [reference-update](.github/workflows/reference-update.yml) job has stopped.
+  Tell the user.
+- Best time: a weekday before the 9:30 ET open. Before the open, prices are
+  from the last close; open interest is updated overnight.
+- Dry run with fake data and no network: `python ../scripts/daily_heatmap.py --fixture`.
+  The page title then says "SYNTHETIC FIXTURE DATA".
+- Do not commit anything. The script uses its own temporary settings and
+  database and does not touch the app's files.
+
+How to read it: each cell is the call-minus-put GEX proxy in USD per 1% move.
+Green means call-heavy, red means put-heavy, and darker means bigger. Rows are
+strikes (with the SPX or NDX level next to each); columns are expirations.
+The dashed row is the current spot price. See
+[ADR-0004](docs/ADR-0004-daily-heatmap-for-agents.md).
+
 ## Stack
 
 - Frontend: React, TypeScript, Vite, shadcn/ui, Tailwind CSS v4, Plotly.js

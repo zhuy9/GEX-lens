@@ -37,6 +37,14 @@ workflow write projected SPY/QQQ schedules to
 `reference/dividend_schedules.json`; for `manual_schedule`, the backend takes
 the newer `reviewed_at` of that file and the local `reference_inputs.json`.
 
+## ADR-0004
+
+[ADR-0004](docs/ADR-0004-daily-heatmap-for-agents.md) adds
+`scripts/daily_heatmap.py`: one command an outside agent (Muse) runs once a
+day to fetch SPY/QQQ from Nasdaq and write a screenshot-ready
+`exports/heatmap.html`. It reuses the backend refresh code; it is not a server
+feature and adds no polling to the app.
+
 ## Plan and milestone rules
 
 - PRD milestones M0-M5 are done; ADR-0001 milestones M0-M6 (its own Section

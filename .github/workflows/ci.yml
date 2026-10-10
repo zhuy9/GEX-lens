@@ -55,6 +55,9 @@ jobs:
         # separately (see its own comments for the measuring machine); this
         # keeps functional pass/fail here independent of runner performance.
         run: pytest --ignore=tests/test_performance.py
+      - name: Daily heatmap script (fixture data, no network)
+        working-directory: backend
+        run: python ../scripts/daily_heatmap.py --fixture
 
   frontend:
     runs-on: ubuntu-latest
