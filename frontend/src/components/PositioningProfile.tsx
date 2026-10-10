@@ -49,14 +49,11 @@ export function PositioningProfile({ profiles = [] }: PositioningProfileProps) {
 	if (selected === undefined) return null;
 
 	return (
-		<div className="rounded-md border p-3 text-sm">
+		<div className="text-sm">
+			{/* The surrounding Card in App.tsx supplies the border and title. */}
 			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div>
-					<div className="font-medium">Expiration positioning</div>
-					<div className="text-xs text-muted-foreground">
-						OI walls, GEX peaks, and max pain are reference levels, not
-						forecasts.
-					</div>
+				<div className="text-xs text-muted-foreground">
+					OI walls, GEX peaks, and max pain are reference levels, not forecasts.
 				</div>
 				<label className="flex items-center gap-2 text-xs">
 					<span>Expiration</span>
