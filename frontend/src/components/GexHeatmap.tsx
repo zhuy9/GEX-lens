@@ -193,10 +193,11 @@ export const GexHeatmap = memo(function GexHeatmap({
 	const isWindowed = !expanded && gex.strikes.length > WINDOW_SIZE;
 	if (isWindowed) {
 		const half = Math.floor(WINDOW_SIZE / 2);
-		let start = Math.max(0, nearestIndex - half);
-		const end = Math.min(gex.strikes.length, start + WINDOW_SIZE);
-		start = Math.max(0, end - WINDOW_SIZE);
-		visibleIndices = Array.from({ length: end - start }, (_, i) => start + i);
+		const start = Math.min(
+			Math.max(0, nearestIndex - half),
+			gex.strikes.length - WINDOW_SIZE,
+		);
+		visibleIndices = visibleIndices.slice(start, start + WINDOW_SIZE);
 	}
 	// Highest strike first, like an order book.
 	const rowIndices = [...visibleIndices].reverse();

@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from uuid import uuid4
@@ -77,7 +77,6 @@ logger = logging.getLogger(__name__)
 # Provider error codes with a status other than the 502 default.
 _PROVIDER_ERROR_STATUS = {
     "UNSUPPORTED_SYMBOL": 422,
-    "UPSTREAM_RATE_LIMITED": 503,
 }
 
 
@@ -188,10 +187,6 @@ def _http_error(
     return HTTPException(status_code=status_code, detail=detail)
 
 
-def _date_or_none(value: date | None) -> str | None:
-    return value.isoformat() if value is not None else None
-
-
 def _calculation_input_hash(
     *,
     contracts: tuple[OptionQuote, ...],
@@ -226,7 +221,7 @@ def _calculation_input_hash(
         {
             "event_id": e.event_id,
             "ex_date": e.ex_date.isoformat(),
-            "payment_date": _date_or_none(e.payment_date),
+            "payment_date": e.payment_date.isoformat() if e.payment_date else None,
             "amount": str(e.amount),
             "amount_status": e.amount_status,
         }
@@ -358,9 +353,6 @@ def _collect_and_save(
         dividend_warnings=dividend_warnings,
         resolved_at=datetime.now(UTC),
     )
-    for code in market_inputs_obj.warnings:
-        if code not in warnings:
-            warnings.append(code)
 
     # One context per expiry actually present in this chain (M3.2), not one
     # independent dividend calculation per function.
@@ -377,10 +369,9 @@ def _collect_and_save(
         )
         for expiration in {c.expiration for c in snapshot.contracts}
     }
-    for context in contexts.values():
-        for code in context.warnings:
-            if code not in warnings:
-                warnings.append(code)
+    for code in (*market_inputs_obj.warnings, *(c for ctx in contexts.values() for c in ctx.warnings)):
+        if code not in warnings:
+            warnings.append(code)
 
     priced, gex, surface, quality = analyze_snapshot_v2(
         snapshot.contracts,
@@ -457,9 +448,7 @@ def create_app(
     dividend_providers: dict[str, DividendDataProvider | None] | None = None,
 ) -> FastAPI:
     if set(settings.dividend_sources) != set(SYMBOLS):
-        raise ValueError(
-            f"dividend_sources must have exactly one entry per instrument: {', '.join(SYMBOLS)}"
-        )
+        raise ValueError(f"dividend_sources must have exactly one entry per instrument: {', '.join(SYMBOLS)}")
     storage.init_schema(settings.db_path)
     provider_is_owned = provider is None
     active_provider = provider if provider is not None else build_provider(settings)
@@ -471,9 +460,7 @@ def create_app(
     active_dividend_providers = (
         dividend_providers
         if dividend_providers is not None
-        else {
-            symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in SYMBOLS
-        }
+        else {symbol: build_dividend_provider(settings.dividend_sources[symbol]) for symbol in SYMBOLS}
     )
     gate = RefreshCoordinator(settings.refresh_min_interval_seconds)
 
@@ -483,19 +470,14 @@ def create_app(
         # Only close a provider this factory built itself (e.g. NasdaqProvider's
         # own httpx.Client). An injected provider's client (tests, or a future
         # caller) belongs to whoever constructed it, not to this app.
-        if provider_is_owned:
-            close = getattr(active_provider, "close", None)
-            if close is not None:
+        owned = [
+            *([active_provider] if provider_is_owned else []),
+            *([active_rate_provider] if rate_provider_is_owned else []),
+            *(active_dividend_providers.values() if dividend_providers_are_owned else []),
+        ]
+        for owned_provider in owned:
+            if close := getattr(owned_provider, "close", None):
                 close()
-        if rate_provider_is_owned:
-            close = getattr(active_rate_provider, "close", None)
-            if close is not None:
-                close()
-        if dividend_providers_are_owned:
-            for reference_provider in active_dividend_providers.values():
-                close = getattr(reference_provider, "close", None)
-                if close is not None:
-                    close()
 
     app = FastAPI(lifespan=lifespan)
 

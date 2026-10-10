@@ -142,9 +142,7 @@ def get_latest_dashboard(db_path: str, source_mode: str, symbol: str) -> dict | 
     return None if row is None else json.loads(row[0])
 
 
-def get_reference_cache(
-    db_path: str, *, kind: str, provider_id: str, subject: str
-) -> dict | None:
+def get_reference_cache(db_path: str, *, kind: str, provider_id: str, subject: str) -> dict | None:
     """Latest cached fetch for this (kind, provider_id, subject), or None.
     The cache is an optimization (Section 8.1): callers decide TTL eligibility
     themselves from the returned fetched_at."""
@@ -231,18 +229,16 @@ def save_snapshot(
             if priced_quotes:
                 _bulk_insert_option_quotes(conn, snapshot_id, priced_quotes)
 
-            stale = conn.execute(
-                """
+            stale = """
                 SELECT snapshot_id FROM snapshots
                 WHERE source_mode = ? AND symbol = ?
                 ORDER BY collected_at DESC, snapshot_id DESC
                 OFFSET ?
-                """,
-                [source_mode, symbol, _KEEP_LATEST],
-            ).fetchall()
-            for (stale_id,) in stale:
-                conn.execute("DELETE FROM option_quotes WHERE snapshot_id = ?", [stale_id])
-                conn.execute("DELETE FROM snapshots WHERE snapshot_id = ?", [stale_id])
+            """
+            for table in ("option_quotes", "snapshots"):  # quotes first: they reference snapshots
+                conn.execute(
+                    f"DELETE FROM {table} WHERE snapshot_id IN ({stale})", [source_mode, symbol, _KEEP_LATEST]
+                )
 
             conn.execute("COMMIT")
         except Exception:

@@ -6,7 +6,7 @@ import {
 	isAbortError,
 	postRefresh,
 } from "@/api";
-import type { ApiErrorBody, DashboardResponse } from "@/types";
+import type { DashboardResponse } from "@/types";
 
 export type DashboardStatus = "loading" | "empty" | "ready" | "error";
 
@@ -21,7 +21,7 @@ export interface UseDashboardResult {
 	status: DashboardStatus;
 	loadError: string | null;
 	refreshing: boolean;
-	refreshError: ApiErrorBody | null;
+	refreshError: string | null;
 	refresh: (options?: { forceReferenceRefresh?: boolean }) => Promise<void>;
 	/** Retries the saved-dashboard GET only; never issues a POST. */
 	retryLoad: () => void;
@@ -48,7 +48,7 @@ export function useDashboard(
 	const [status, setStatus] = useState<DashboardStatus>("loading");
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [refreshing, setRefreshing] = useState(false);
-	const [refreshError, setRefreshError] = useState<ApiErrorBody | null>(null);
+	const [refreshError, setRefreshError] = useState<string | null>(null);
 	const generationRef = useRef(0);
 	const loadAbortRef = useRef<AbortController | null>(null);
 	const [reloadTick, setReloadTick] = useState(0);
@@ -107,19 +107,9 @@ export function useDashboard(
 				}
 			} catch (error) {
 				if (generationRef.current === generation) {
-					const body: ApiErrorBody =
-						error instanceof ApiError
-							? {
-									code: error.code,
-									message: error.message,
-									retry_after_seconds: error.retryAfterSeconds,
-								}
-							: {
-									code: "UNKNOWN",
-									message: "Refresh failed.",
-									retry_after_seconds: null,
-								};
-					setRefreshError(body);
+					setRefreshError(
+						error instanceof ApiError ? error.message : "Refresh failed.",
+					);
 				}
 			} finally {
 				// Stay "refreshing" through the post-refresh config reconciliation

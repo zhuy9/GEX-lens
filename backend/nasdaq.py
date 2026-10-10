@@ -6,6 +6,7 @@ docs/dividend-source-contract.md, verified against real samples. Do not
 change parsing assumptions without updating those documents first.
 """
 
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -216,12 +217,16 @@ def _row_identity(row: dict, current_expiration: date | None) -> tuple[date, Dec
     raise ProviderError("SCHEMA_ERROR", "Data row with no known expiration/strike")
 
 
+def _default_client() -> httpx.Client:
+    return httpx.Client(
+        timeout=httpx.Timeout(RW_POOL_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
+        headers=NASDAQ_HEADERS,
+    )
+
+
 class NasdaqProvider:
     def __init__(self, client: httpx.Client | None = None) -> None:
-        self._client = client or httpx.Client(
-            timeout=httpx.Timeout(RW_POOL_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
-            headers=NASDAQ_HEADERS,
-        )
+        self._client = client or _default_client()
 
     def close(self) -> None:
         """Closes the underlying HTTP client. Only meaningful when this
@@ -265,13 +270,13 @@ class NasdaqProvider:
 
         for page_index in range(CHAIN_MAX_REQUESTS):
             params = dict(params_base, offset=page_index * CHAIN_PAGE_LIMIT)
-            response = self._get(symbol, params)
+            response = _http_get(self._client, NASDAQ_CHAIN_URL.format(symbol=symbol), params)
             response_count += 1
             total_bytes += len(response.content)
             if total_bytes > CHAIN_MAX_RESPONSE_BYTES:
                 raise ProviderError("INCOMPLETE_CHAIN", "Response size cap exceeded")
 
-            body = self._parse_body(response)
+            body = _parse_json_envelope(response, schema_error_code="SCHEMA_ERROR", check_403=True)
             raw_pages.append(body)
             page = _parse_page(body)
 
@@ -411,14 +416,8 @@ class NasdaqProvider:
             warnings=tuple(warnings),
             source_row_count=source_row_count,
             provider_response_count=response_count,
-            raw_payload_json=self._sanitize_raw_payload(params_base, raw_pages),
+            raw_payload_json=json.dumps({"request_params": params_base, "pages": raw_pages}),
         )
-
-    def _get(self, symbol: str, params: dict) -> httpx.Response:
-        return _http_get(self._client, NASDAQ_CHAIN_URL.format(symbol=symbol), params)
-
-    def _parse_body(self, response: httpx.Response) -> dict:
-        return _parse_json_envelope(response, schema_error_code="SCHEMA_ERROR", check_403=True)
 
     def _parse_chain_asof(self, raw: str | None) -> datetime | None:
         """PRD 6.1: only accept a value that is unambiguously a
@@ -449,11 +448,6 @@ class NasdaqProvider:
         except ValueError as exc:
             raise ProviderError("SCHEMA_ERROR", f"Unparseable lastTrade AS OF date {raw!r}") from exc
 
-    def _sanitize_raw_payload(self, params: dict, pages: list[dict]) -> str:
-        import json
-
-        return json.dumps({"request_params": params, "pages": pages})
-
 
 def _parse_mdy_date(raw: str) -> date | None:
     """MM/DD/YYYY, or None for the "N/A" missing-value sentinel confirmed
@@ -480,10 +474,7 @@ class NasdaqDividendProvider:
     symbols and must stay on manual_schedule -- not requested here at all."""
 
     def __init__(self, client: httpx.Client | None = None) -> None:
-        self._client = client or httpx.Client(
-            timeout=httpx.Timeout(RW_POOL_TIMEOUT_SECONDS, connect=CONNECT_TIMEOUT_SECONDS),
-            headers=NASDAQ_HEADERS,
-        )
+        self._client = client or _default_client()
 
     def close(self) -> None:
         self._client.close()

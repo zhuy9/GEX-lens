@@ -40,15 +40,7 @@ export interface Parameters {
 	algorithm_version: string;
 }
 
-export interface ParametersV2 {
-	r: number;
-	q: number;
-	multiplier_assumed: boolean;
-	min_calendar_dte: number;
-	max_calendar_dte: number;
-	min_strike_pct: number;
-	max_strike_pct: number;
-	pricing_time_convention: string;
+export interface ParametersV2 extends Omit<Parameters, "algorithm_version"> {
 	algorithm_version: "2";
 	model_id: "cash_pv_bsm_v2";
 	dividend_model: "cash_schedule";
@@ -201,8 +193,7 @@ export interface SurfaceData {
 	observations: SurfaceObservation[];
 }
 
-export interface DashboardResponseV1 {
-	schema_version: 1;
+interface DashboardResponseBase {
 	snapshot_id: string;
 	symbol: string;
 	source_mode: SourceMode;
@@ -214,35 +205,24 @@ export interface DashboardResponseV1 {
 	spot: number;
 	spot_kind: "last_trade";
 	spot_origin: "chain_payload";
-	parameters: Parameters;
 	warnings: string[];
 	quality: QualityCounts;
 	gex: GexData;
 	surface: SurfaceData;
 }
 
-export interface DashboardResponseV2 {
+export interface DashboardResponseV1 extends DashboardResponseBase {
+	schema_version: 1;
+	parameters: Parameters;
+}
+
+export interface DashboardResponseV2 extends DashboardResponseBase {
 	schema_version: 2;
-	snapshot_id: string;
-	symbol: string;
-	source_mode: SourceMode;
-	collected_at: string;
-	valuation_at: string;
-	chain_asof: string | null;
-	spot_asof: string | null;
 	spot_asof_date: string | null;
-	oi_asof: string | null;
-	spot: number;
-	spot_kind: "last_trade";
-	spot_origin: "chain_payload";
 	instrument: Instrument;
 	parameters: ParametersV2;
 	market_inputs: MarketInputs;
 	pricing_contexts: ExpiryPricingContext[];
-	warnings: string[];
-	quality: QualityCounts;
-	gex: GexData;
-	surface: SurfaceData;
 	positioning: PositioningProfile[];
 	calculation_input_hash: string;
 }

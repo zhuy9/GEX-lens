@@ -5,11 +5,19 @@ from __future__ import annotations
 import math
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    field_validator,
+    model_validator,
+)
 
 ALGORITHM_VERSION = "1"
 NY_TZ = ZoneInfo("America/New_York")
@@ -45,21 +53,17 @@ def year_fraction(expiration: date, valuation_at: datetime) -> float:
     return (model_expiry_at_utc(expiration) - valuation_at).total_seconds() / SECONDS_PER_YEAR
 
 
-def _require_aware(v: datetime | None) -> datetime | None:
-    # A canonical snapshot's datetime fields must be safe to subtract from an
-    # aware expiry timestamp (year_fraction) without a provider adapter
-    # having to remember that rule -- enforced once, here, at construction.
-    if v is not None and v.tzinfo is None:
-        raise ValueError("datetime fields must be timezone-aware")
-    return v
-
-
 def _require_rate_cc_bounded(v: float) -> float:
     # ADR-0001 Section 6.2's application guardrail: an input limit, not a
     # statement about possible market rates.
     if not math.isfinite(v) or not (-0.10 <= v <= 0.50):
         raise ValueError("rate_cc must be finite and within [-0.10, 0.50]")
     return v
+
+
+PositiveDecimal = Annotated[Decimal, Field(gt=0)]
+FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+PositiveFiniteFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 
 
 class ChainRequest(BaseModel):
@@ -77,39 +81,19 @@ class OptionQuote(BaseModel):
 
     symbol: str
     expiration: date
-    strike: Decimal
+    strike: PositiveDecimal
     option_type: Literal["C", "P"]
     bid: float | None
     ask: float | None
     last: float | None
-    volume: int | None
-    open_interest: int | None
+    # A provider adapter must produce a valid canonical count once, or flag it
+    # invalid and pass null -- not push a negative count downstream.
+    volume: NonNegativeInt | None
+    open_interest: NonNegativeInt | None
     multiplier: int
     provider_contract_id: str | None
-    quote_asof: datetime | None
+    quote_asof: AwareDatetime | None
     flags: tuple[str, ...] = ()
-
-    @field_validator("strike")
-    @classmethod
-    def _strike_positive(cls, v: Decimal) -> Decimal:
-        if v <= 0:
-            raise ValueError("strike must be positive")
-        return v
-
-    @field_validator("volume", "open_interest")
-    @classmethod
-    def _count_nonnegative(cls, v: int | None) -> int | None:
-        # A provider adapter must produce a valid canonical count once, or
-        # flag it invalid and pass null -- not push a negative/fractional
-        # count downstream for analytics to repair.
-        if v is not None and v < 0:
-            raise ValueError("count fields must be null or nonnegative")
-        return v
-
-    @field_validator("quote_asof")
-    @classmethod
-    def _quote_asof_aware(cls, v: datetime | None) -> datetime | None:
-        return _require_aware(v)
 
 
 class ChainSnapshot(BaseModel):
@@ -119,13 +103,13 @@ class ChainSnapshot(BaseModel):
 
     provider_id: str
     symbol: str
-    underlying_price: float
+    underlying_price: PositiveFiniteFloat
     underlying_price_kind: Literal["last_trade"]
     underlying_price_origin: Literal["chain_payload"]
-    collection_started_at: datetime
-    collected_at: datetime
-    chain_asof: datetime | None
-    spot_asof: datetime | None
+    collection_started_at: AwareDatetime
+    collected_at: AwareDatetime
+    chain_asof: AwareDatetime | None
+    spot_asof: AwareDatetime | None
     # Section 7.5: a date-only underlying as-of, populated only when the
     # chain adapter can verify it independently of a precise spot_asof.
     # Never synthesized from spot_asof; old snapshots simply lack it.
@@ -136,18 +120,6 @@ class ChainSnapshot(BaseModel):
     source_row_count: int
     provider_response_count: int
     raw_payload_json: str
-
-    @field_validator("underlying_price")
-    @classmethod
-    def _finite_positive(cls, v: float) -> float:
-        if not math.isfinite(v) or v <= 0:
-            raise ValueError("underlying_price must be finite and positive")
-        return v
-
-    @field_validator("collection_started_at", "collected_at", "chain_asof", "spot_asof")
-    @classmethod
-    def _datetimes_aware(cls, v: datetime | None) -> datetime | None:
-        return _require_aware(v)
 
 
 class PricedQuote(BaseModel):
@@ -166,32 +138,19 @@ class RateObservation(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     effective_date: date
-    percent_rate: float
+    percent_rate: FiniteFloat
     rate_type: str
     revision_indicator: str | None
-
-    @field_validator("percent_rate")
-    @classmethod
-    def _finite(cls, v: float) -> float:
-        if isinstance(v, bool) or not math.isfinite(v):
-            raise ValueError("percent_rate must be a finite number, not a bool")
-        return v
 
 
 class RateBatch(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     provider_id: str
-    fetched_at: datetime
+    fetched_at: AwareDatetime
     source_ref: str
     observations: tuple[RateObservation, ...]
     raw_payload_json: str
-
-    @field_validator("fetched_at")
-    @classmethod
-    def _aware(cls, v: datetime) -> datetime:
-        _require_aware(v)
-        return v
 
 
 class ResolvedRate(BaseModel):
@@ -202,31 +161,18 @@ class ResolvedRate(BaseModel):
     source_provider_id: str
     source_ref: str
     effective_date: date
-    fetched_at: datetime
-    raw_percent_rate: float | None
+    fetched_at: AwareDatetime
+    raw_percent_rate: FiniteFloat | None
     rate_cc: float
     quote_convention: Literal["percent_simple_act360", "continuous_act365f"]
     normalization: Literal["constant_daily_sofr_proxy", "manual_already_continuous"]
     revision_indicator: str | None
     manual_reason: str | None
 
-    @field_validator("fetched_at")
-    @classmethod
-    def _aware(cls, v: datetime) -> datetime:
-        _require_aware(v)
-        return v
-
     @field_validator("rate_cc")
     @classmethod
     def _rate_cc_bounded(cls, v: float) -> float:
         return _require_rate_cc_bounded(v)
-
-    @field_validator("raw_percent_rate")
-    @classmethod
-    def _raw_finite(cls, v: float | None) -> float | None:
-        if v is not None and (isinstance(v, bool) or not math.isfinite(v)):
-            raise ValueError("raw_percent_rate must be null or a finite number")
-        return v
 
 
 class ManualRateInput(BaseModel):
@@ -234,7 +180,7 @@ class ManualRateInput(BaseModel):
 
     rate_cc: float
     effective_date: date
-    entered_at: datetime
+    entered_at: AwareDatetime
     source_ref: str
     reason: str
 
@@ -244,12 +190,6 @@ class ManualRateInput(BaseModel):
         # Checked here too, so a bad reference_inputs.json fails as
         # REFERENCE_INPUT_FILE_INVALID, not a 500 from ResolvedRate later.
         return _require_rate_cc_bounded(v)
-
-    @field_validator("entered_at")
-    @classmethod
-    def _aware(cls, v: datetime) -> datetime:
-        _require_aware(v)
-        return v
 
 
 class DividendRecord(BaseModel):
@@ -261,16 +201,9 @@ class DividendRecord(BaseModel):
     ex_date: date
     payment_date: date | None
     declaration_date: date | None
-    amount: Decimal | None
+    amount: PositiveDecimal | None
     kind: Literal["ordinary_cash", "other", "unknown"]
     source_ref: str
-
-    @field_validator("amount")
-    @classmethod
-    def _amount_positive(cls, v: Decimal | None) -> Decimal | None:
-        if v is not None and v <= 0:
-            raise ValueError("amount must be null or positive")
-        return v
 
     @model_validator(mode="after")
     def _payment_not_before_ex(self) -> DividendRecord:
@@ -287,16 +220,11 @@ class DividendFeedSnapshot(BaseModel):
 
     provider_id: str
     symbol: str
-    fetched_at: datetime
-    source_asof: datetime | None
+    fetched_at: AwareDatetime
+    source_asof: AwareDatetime | None
     records: tuple[DividendRecord, ...]
     raw_payload_json: str
     warnings: tuple[str, ...] = ()
-
-    @field_validator("fetched_at", "source_asof")
-    @classmethod
-    def _aware(cls, v: datetime | None) -> datetime | None:
-        return _require_aware(v)
 
 
 class ExpectedDividend(BaseModel):
@@ -305,16 +233,9 @@ class ExpectedDividend(BaseModel):
     event_id: str
     ex_date: date
     payment_date: date | None
-    amount: Decimal | None
+    amount: PositiveDecimal | None
     amount_status: Literal["declared", "estimated", "pending_source"]
     source_ref: str
-
-    @field_validator("amount")
-    @classmethod
-    def _amount_positive(cls, v: Decimal | None) -> Decimal | None:
-        if v is not None and v <= 0:
-            raise ValueError("amount must be null or positive")
-        return v
 
     @model_validator(mode="after")
     def _pending_has_no_amount(self) -> ExpectedDividend:
@@ -339,18 +260,12 @@ class ScheduleReview(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     symbol: str
-    reviewed_at: datetime
+    reviewed_at: AwareDatetime
     coverage_start: date
     coverage_end: date
     no_other_events_expected: Literal[True]
     source_refs: tuple[str, ...]
     expected_events: tuple[ExpectedDividend, ...]
-
-    @field_validator("reviewed_at")
-    @classmethod
-    def _aware(cls, v: datetime) -> datetime:
-        _require_aware(v)
-        return v
 
     @model_validator(mode="after")
     def _coverage_ordered(self) -> ScheduleReview:
@@ -388,17 +303,10 @@ class ResolvedDividend(BaseModel):
     event_id: str
     ex_date: date
     payment_date: date | None
-    amount: Decimal
+    amount: PositiveDecimal
     amount_status: Literal["source_reported", "owner_declared", "estimated"]
     source_ref: str
     source_provider_id: str
-
-    @field_validator("amount")
-    @classmethod
-    def _amount_positive(cls, v: Decimal) -> Decimal:
-        if v <= 0:
-            raise ValueError("amount must be positive")
-        return v
 
     @model_validator(mode="after")
     def _payment_not_before_ex(self) -> ResolvedDividend:
@@ -441,17 +349,11 @@ class MarketInputs(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     input_schema_version: Literal[1] = 1
-    resolved_at: datetime
+    resolved_at: AwareDatetime
     rate: ResolvedRate
     dividend_schedule: ResolvedDividendSchedule
     warnings: tuple[str, ...]
     reference_bundle_hash: str
-
-    @field_validator("resolved_at")
-    @classmethod
-    def _aware(cls, v: datetime) -> datetime:
-        _require_aware(v)
-        return v
 
 
 class ExpiryPricingContext(BaseModel):
@@ -463,8 +365,8 @@ class ExpiryPricingContext(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", protected_namespaces=())
 
     expiration: date
-    valuation_at: datetime
-    expiry_at: datetime
+    valuation_at: AwareDatetime
+    expiry_at: AwareDatetime
     T: float
     actual_spot: float
     model_spot: float
@@ -475,12 +377,6 @@ class ExpiryPricingContext(BaseModel):
     used_event_ids: tuple[str, ...]
     warnings: tuple[str, ...]
     status: Literal["OK", "INVALID_DIVIDEND_ADJUSTED_SPOT"]
-
-    @field_validator("valuation_at", "expiry_at")
-    @classmethod
-    def _aware(cls, v: datetime) -> datetime:
-        _require_aware(v)
-        return v
 
 
 class Settings(BaseModel):
@@ -685,10 +581,10 @@ class DashboardResponseV1(BaseModel):
     snapshot_id: UUID
     symbol: str
     source_mode: str
-    collected_at: datetime
-    valuation_at: datetime
-    chain_asof: datetime | None
-    spot_asof: datetime | None
+    collected_at: AwareDatetime
+    valuation_at: AwareDatetime
+    chain_asof: AwareDatetime | None
+    spot_asof: AwareDatetime | None
     oi_asof: date | None
     spot: float
     spot_kind: Literal["last_trade"]
@@ -698,11 +594,6 @@ class DashboardResponseV1(BaseModel):
     quality: QualityCounts
     gex: GexData
     surface: SurfaceData
-
-    @field_validator("collected_at", "valuation_at", "chain_asof", "spot_asof")
-    @classmethod
-    def _datetimes_aware(cls, v: datetime | None) -> datetime | None:
-        return _require_aware(v)
 
 
 class DashboardResponseV2(BaseModel):
@@ -715,10 +606,10 @@ class DashboardResponseV2(BaseModel):
     snapshot_id: UUID
     symbol: str
     source_mode: str
-    collected_at: datetime
-    valuation_at: datetime
-    chain_asof: datetime | None
-    spot_asof: datetime | None
+    collected_at: AwareDatetime
+    valuation_at: AwareDatetime
+    chain_asof: AwareDatetime | None
+    spot_asof: AwareDatetime | None
     spot_asof_date: date | None
     oi_asof: date | None
     spot: float
@@ -734,8 +625,3 @@ class DashboardResponseV2(BaseModel):
     surface: SurfaceData
     calculation_input_hash: str
     positioning: tuple[PositioningProfile, ...] = ()
-
-    @field_validator("collected_at", "valuation_at", "chain_asof", "spot_asof")
-    @classmethod
-    def _datetimes_aware(cls, v: datetime | None) -> datetime | None:
-        return _require_aware(v)

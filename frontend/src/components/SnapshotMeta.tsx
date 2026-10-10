@@ -7,8 +7,6 @@ import type { DashboardResponse } from "@/types";
 interface SnapshotMetaProps {
 	dashboard: DashboardResponse;
 	offsetMs: number;
-	/** Forces a re-render every second so age text stays current; unused otherwise. */
-	tick: number;
 }
 
 const STALE_AFTER_SECONDS = 300;
@@ -55,8 +53,7 @@ export function PanelWarnings({ warnings }: { warnings: string[] }) {
 	);
 }
 
-export function SnapshotMeta({ dashboard, offsetMs, tick }: SnapshotMetaProps) {
-	void tick;
+export function SnapshotMeta({ dashboard, offsetMs }: SnapshotMetaProps) {
 	const age = ageSeconds(dashboard.collected_at, offsetMs);
 	const isStale = age > STALE_AFTER_SECONDS;
 	const { parameters, quality } = dashboard;

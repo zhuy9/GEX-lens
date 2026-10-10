@@ -31,13 +31,15 @@ const IvSurface = lazy(() =>
 	import("@/components/IvSurface").then((m) => ({ default: m.IvSurface })),
 );
 
-const RATIOS: Partial<Record<string, { index: string; ratio: number }>> =
-	conversionRatios.ratios;
-
-function conversionFor(symbol: string): IndexConversion | undefined {
-	const entry = RATIOS[symbol];
-	return entry && { ...entry, asof: conversionRatios.asof };
-}
+// Built once so each symbol's conversion keeps a stable identity across
+// renders (GexHeatmap is memo'd).
+const CONVERSIONS: Partial<Record<string, IndexConversion>> =
+	Object.fromEntries(
+		Object.entries(conversionRatios.ratios).map(([s, r]) => [
+			s,
+			{ ...r, asof: conversionRatios.asof },
+		]),
+	);
 
 export default function App() {
 	const {
@@ -154,7 +156,7 @@ export default function App() {
 			{refreshError && (
 				<Alert variant="destructive">
 					<AlertTitle>Refresh failed</AlertTitle>
-					<AlertDescription>{refreshError.message}</AlertDescription>
+					<AlertDescription>{refreshError}</AlertDescription>
 				</Alert>
 			)}
 
@@ -204,11 +206,7 @@ export default function App() {
 							<CardTitle>Snapshot</CardTitle>
 						</CardHeader>
 						<CardContent className="flex flex-col gap-3">
-							<SnapshotMeta
-								dashboard={dashboard}
-								offsetMs={serverOffsetMs}
-								tick={tick}
-							/>
+							<SnapshotMeta dashboard={dashboard} offsetMs={serverOffsetMs} />
 							<PricingInputsPanel
 								dashboard={dashboard}
 								onForceRefresh={() =>
@@ -270,7 +268,7 @@ export default function App() {
 									unit={moveUnit}
 									spot={dashboard.spot}
 									valuationAt={dashboard.valuation_at}
-									conversion={conversionFor(dashboard.symbol)}
+									conversion={CONVERSIONS[dashboard.symbol]}
 								/>
 							</ChartErrorBoundary>
 						</CardContent>

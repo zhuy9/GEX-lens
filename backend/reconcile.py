@@ -371,16 +371,12 @@ def _build_scenario_contexts(
     """Section 12's four-scenario matrix: saved/rate_only reuse whichever
     model the original snapshot actually used; cash_only/rate_and_cash
     always substitute the scenario's cash schedule with continuous q=0."""
-    if scenario == "saved":
-        r, events, use_legacy = original_r, original_events, original_is_legacy
-    elif scenario == "rate_only":
-        r, events, use_legacy = scenario_r, original_events, original_is_legacy
-    elif scenario == "cash_only":
-        r, events, use_legacy = original_r, scenario_events, False
-    elif scenario == "rate_and_cash":
-        r, events, use_legacy = scenario_r, scenario_events, False
-    else:
-        raise ValueError(f"Unknown scenario: {scenario!r}")
+    r, events, use_legacy = {
+        "saved": (original_r, original_events, original_is_legacy),
+        "rate_only": (scenario_r, original_events, original_is_legacy),
+        "cash_only": (original_r, scenario_events, False),
+        "rate_and_cash": (scenario_r, scenario_events, False),
+    }[scenario]
 
     if use_legacy:
         return {exp: _legacy_context(exp, valuation_at, actual_spot, r, original_q) for exp in expirations}
@@ -793,13 +789,6 @@ def main(argv: list[str] | None = None) -> int:
 
     priced_by_scenario, gex_by_scenario, quality_by_scenario, contexts_by_scenario = {}, {}, {}, {}
     for scenario in SCENARIOS:
-        # N7: every scenario prices the identical quote/OI/spot/time population
-        # (Section 12); this hash never depends on scenario_r/scenario_events,
-        # so recomputing it per scenario must always match the value above.
-        recomputed = _quote_time_hash(
-            saved.contracts, actual_spot, saved.valuation_at, min_dte, max_dte, min_pct, max_pct
-        )
-        assert recomputed == quote_time_hash_value
         contexts = _build_scenario_contexts(
             scenario,
             expirations,

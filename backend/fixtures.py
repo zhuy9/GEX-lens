@@ -124,22 +124,7 @@ class FixtureProvider:
         rows = _synthesize_symbol(request.symbol, request.min_calendar_dte, request.max_calendar_dte, rng)
 
         contracts = tuple(
-            OptionQuote(
-                symbol=row["symbol"],
-                expiration=row["expiration"],
-                strike=Decimal(row["strike"]),
-                option_type=row["option_type"],
-                bid=row["bid"],
-                ask=row["ask"],
-                last=row["last"],
-                volume=row["volume"],
-                open_interest=row["open_interest"],
-                multiplier=row["multiplier"],
-                provider_contract_id=row["provider_contract_id"],
-                quote_asof=row["quote_asof"],
-                flags=(),
-            )
-            for row in rows
+            OptionQuote.model_validate({**row, "strike": Decimal(row["strike"]), "flags": ()}) for row in rows
         )
 
         raw_payload = json.dumps(

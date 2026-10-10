@@ -5,21 +5,12 @@ import type {
 } from "./types";
 
 export class ApiError extends Error {
-	status: number;
 	code: string;
-	retryAfterSeconds: number | null;
 
-	constructor(
-		status: number,
-		code: string,
-		message: string,
-		retryAfterSeconds: number | null,
-	) {
+	constructor(code: string, message: string) {
 		super(message);
 		this.name = "ApiError";
-		this.status = status;
 		this.code = code;
-		this.retryAfterSeconds = retryAfterSeconds;
 	}
 }
 
@@ -41,18 +32,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 			// not the expected JSON envelope
 		}
 		if (body?.error) {
-			throw new ApiError(
-				response.status,
-				body.error.code,
-				body.error.message,
-				body.error.retry_after_seconds,
-			);
+			throw new ApiError(body.error.code, body.error.message);
 		}
 		throw new ApiError(
-			response.status,
 			"HTTP_ERROR",
 			`Request failed (HTTP ${response.status})`,
-			null,
 		);
 	}
 	return (await response.json()) as T;

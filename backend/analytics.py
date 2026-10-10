@@ -1,6 +1,7 @@
 """Pure quote filters, BSM, IV, gamma, GEX, surface."""
 
 import math
+from collections import Counter
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import NamedTuple
@@ -639,10 +640,7 @@ def build_quality_counts(
     priced_quotes: tuple[PricedQuote, ...], gex_cells_flat: list[GexCell | None], source_row_count: int
 ) -> QualityCounts:
     in_scope = [pq for pq in priced_quotes if pq.exclusion_reason != "OUT_OF_SCOPE"]
-    exclusion_counts: dict[str, int] = {}
-    for pq in priced_quotes:
-        if pq.exclusion_reason:
-            exclusion_counts[pq.exclusion_reason] = exclusion_counts.get(pq.exclusion_reason, 0) + 1
+    exclusion_counts = dict(Counter(pq.exclusion_reason for pq in priced_quotes if pq.exclusion_reason))
     return QualityCounts(
         source_rows=source_row_count,
         normalized_contracts=len(priced_quotes),
