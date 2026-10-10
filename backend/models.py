@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -192,9 +192,23 @@ class ManualRateInput(BaseModel):
         return _require_rate_cc_bounded(v)
 
 
-class DividendRecord(BaseModel):
+class _DividendDates(BaseModel):
+    # Enforced on every dividend record type: bad upstream data or local config
+    # must fail where it enters (provider/schema error, REFERENCE_INPUT_FILE_INVALID),
+    # not surface deep inside resolution.
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    @model_validator(mode="after")
+    def _payment_not_before_ex(self) -> Self:
+        # Read from __dict__: the fields live on each subclass, so their order
+        # (and the dumped JSON key order) stays exactly as before.
+        payment_date, ex_date = self.__dict__["payment_date"], self.__dict__["ex_date"]
+        if payment_date is not None and payment_date < ex_date:
+            raise ValueError("payment_date cannot precede ex_date")
+        return self
+
+
+class DividendRecord(_DividendDates):
     provider_record_id: str | None
     symbol: str
     currency: str
@@ -204,15 +218,6 @@ class DividendRecord(BaseModel):
     amount: PositiveDecimal | None
     kind: Literal["ordinary_cash", "other", "unknown"]
     source_ref: str
-
-    @model_validator(mode="after")
-    def _payment_not_before_ex(self) -> DividendRecord:
-        # Same invariant as ResolvedDividend, enforced at this earlier
-        # boundary too: bad upstream data must fail as a provider/schema
-        # error here, not surface deep inside resolution.
-        if self.payment_date is not None and self.payment_date < self.ex_date:
-            raise ValueError("payment_date cannot precede ex_date")
-        return self
 
 
 class DividendFeedSnapshot(BaseModel):
@@ -227,9 +232,7 @@ class DividendFeedSnapshot(BaseModel):
     warnings: tuple[str, ...] = ()
 
 
-class ExpectedDividend(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+class ExpectedDividend(_DividendDates):
     event_id: str
     ex_date: date
     payment_date: date | None
@@ -243,16 +246,6 @@ class ExpectedDividend(BaseModel):
             raise ValueError("pending_source events cannot carry an amount")
         if self.amount_status != "pending_source" and self.amount is None:
             raise ValueError("declared/estimated events require an amount")
-        return self
-
-    @model_validator(mode="after")
-    def _payment_not_before_ex(self) -> ExpectedDividend:
-        # Same invariant as ResolvedDividend, enforced at this earlier
-        # boundary too: bad local config must fail as
-        # REFERENCE_INPUT_FILE_INVALID here, not surface deep inside
-        # resolution.
-        if self.payment_date is not None and self.payment_date < self.ex_date:
-            raise ValueError("payment_date cannot precede ex_date")
         return self
 
 
@@ -297,9 +290,7 @@ class ScheduleReview(BaseModel):
         return self
 
 
-class ResolvedDividend(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
+class ResolvedDividend(_DividendDates):
     event_id: str
     ex_date: date
     payment_date: date | None
@@ -307,12 +298,6 @@ class ResolvedDividend(BaseModel):
     amount_status: Literal["source_reported", "owner_declared", "estimated"]
     source_ref: str
     source_provider_id: str
-
-    @model_validator(mode="after")
-    def _payment_not_before_ex(self) -> ResolvedDividend:
-        if self.payment_date is not None and self.payment_date < self.ex_date:
-            raise ValueError("payment_date cannot precede ex_date")
-        return self
 
 
 class ResolvedDividendSchedule(BaseModel):

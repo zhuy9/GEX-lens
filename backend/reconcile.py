@@ -204,7 +204,7 @@ def _load_snapshot(db_path: str, snapshot_id: uuid.UUID) -> SavedSnapshot:
         symbol, source_mode, collected_at, valuation_at, dashboard_json = row
         dashboard = json.loads(dashboard_json)
 
-        rows = conn.execute(
+        cur = conn.execute(
             """
             SELECT expiration, strike, option_type, bid, ask, last, volume,
                    open_interest, multiplier, provider_contract_id, quote_asof,
@@ -212,52 +212,20 @@ def _load_snapshot(db_path: str, snapshot_id: uuid.UUID) -> SavedSnapshot:
             FROM option_quotes WHERE snapshot_id = ?
             """,
             [snapshot_id],
-        ).fetchall()
+        )
+        rows = cur.fetchall()
+        cols = [c[0] for c in cur.description]
 
     contracts = []
     saved_priced = {}
-    for r in rows:
-        (
-            expiration,
-            strike_raw,
-            option_type,
-            bid,
-            ask,
-            last,
-            volume,
-            oi,
-            multiplier,
-            provider_contract_id,
-            quote_asof,
-            mid,
-            iv,
-            gamma,
-            exclusion_reason,
-            flags_json,
-        ) = r
-        strike = Decimal(str(strike_raw))
-        quote = OptionQuote(
-            symbol=symbol,
-            expiration=expiration,
-            strike=strike,
-            option_type=option_type,
-            bid=bid,
-            ask=ask,
-            last=last,
-            volume=volume,
-            open_interest=oi,
-            multiplier=multiplier,
-            provider_contract_id=provider_contract_id,
-            quote_asof=quote_asof,
-            flags=tuple(json.loads(flags_json)),
-        )
+    for row in rows:
+        rec = dict(zip(cols, row, strict=True))
+        priced = {k: rec.pop(k) for k in ("mid", "iv", "gamma", "exclusion_reason")}
+        rec["strike"] = Decimal(str(rec["strike"]))
+        rec["flags"] = tuple(json.loads(rec["flags"]))
+        quote = OptionQuote.model_validate({**rec, "symbol": symbol})
         contracts.append(quote)
-        saved_priced[(expiration, strike, option_type)] = {
-            "mid": mid,
-            "iv": iv,
-            "gamma": gamma,
-            "exclusion_reason": exclusion_reason,
-        }
+        saved_priced[(rec["expiration"], rec["strike"], rec["option_type"])] = priced
 
     return SavedSnapshot(
         snapshot_id=snapshot_id,
@@ -652,7 +620,7 @@ def _write_summary_md(
     saved: SavedSnapshot,
     baseline_ok: bool,
     mismatches: list[str],
-    results: dict,
+    quality_by_scenario: dict,
     original_is_legacy: bool,
     original_events: tuple[ResolvedDividend, ...],
     scenario_events: tuple[ResolvedDividend, ...],
@@ -706,7 +674,7 @@ def _write_summary_md(
     lines.append("| Scenario | In-scope | Valid IVs | Complete GEX cells |")
     lines.append("|---|---:|---:|---:|")
     for scenario in SCENARIOS:
-        q = results[scenario]["quality"]
+        q = quality_by_scenario[scenario]
         lines.append(f"| {scenario} | {q.in_scope_contracts} | {q.valid_ivs} | {q.complete_gex_cells} |")
     lines.append("")
     lines.append(
@@ -717,22 +685,22 @@ def _write_summary_md(
 
     lines.append("## Dividend events")
     lines.append("")
-    lines.append("### Original (as saved)")
-    if not original_events:
-        lines.append("None (legacy continuous-yield model or an empty reviewed schedule).")
-    for e in original_events:
-        lines.append(
-            f"- {e.ex_date}: ${e.amount} ({e.amount_status}) -- {_event_timing_note(e, expirations)}"
-        )
-    lines.append("")
-    lines.append("### Scenario")
-    if not scenario_events:
-        lines.append("None.")
-    for e in scenario_events:
-        lines.append(
-            f"- {e.ex_date}: ${e.amount} ({e.amount_status}) -- {_event_timing_note(e, expirations)}"
-        )
-    lines.append("")
+    for title, events, empty_text in (
+        (
+            "Original (as saved)",
+            original_events,
+            "None (legacy continuous-yield model or an empty reviewed schedule).",
+        ),
+        ("Scenario", scenario_events, "None."),
+    ):
+        lines.append(f"### {title}")
+        if not events:
+            lines.append(empty_text)
+        for e in events:
+            lines.append(
+                f"- {e.ex_date}: ${e.amount} ({e.amount_status}) -- {_event_timing_note(e, expirations)}"
+            )
+        lines.append("")
 
     lines.append("## Notes")
     lines.append("")
@@ -848,7 +816,7 @@ def main(argv: list[str] | None = None) -> int:
         saved,
         baseline_ok,
         mismatches,
-        {s: {"quality": quality_by_scenario[s]} for s in SCENARIOS},
+        quality_by_scenario,
         original_is_legacy,
         original_events,
         scenario_events,

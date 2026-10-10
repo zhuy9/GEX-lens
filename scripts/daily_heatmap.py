@@ -320,7 +320,7 @@ def render(symbol: str, d: dict, f: dict, conversion: dict | None, fixture: bool
         0.02,
         0.015,
         f"Cells: call-minus-put GEX, USD per 1% move. Green = call gamma, red = put gamma. "
-        f"Rows: strike{rows_note}. Research only, not advice.",
+        f"Rows: strike{rows_note}. Research only. Not financial advice.",
         fontsize=8,
         color="#71717a",
     )
@@ -337,6 +337,8 @@ def main() -> None:
     text = ["SYNTHETIC FIXTURE DATA -- not real prices", ""] if fixture else []
     text += [
         "# GEX daily data",
+        "",
+        "Research only. Not financial advice. Include this line in any summary you send.",
         "",
         "Cells: call-minus-put GEX, USD per 1% move (+ call gamma, - put gamma).",
         "",

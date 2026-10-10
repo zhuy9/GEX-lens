@@ -163,7 +163,7 @@ Biggest date: <expiration> (<n>d) <value> - <grows as it nears / expires this we
 
 QQQ $<spot> (~NDX <level>): <same lines>
 
-Assumes the usual market-maker positioning. Context only, not advice.
+Assumes the usual market-maker positioning. Research only. Not financial advice.
 ```
 
 If the output says "SYNTHETIC FIXTURE DATA", say so and do not summarize it as

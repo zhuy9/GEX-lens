@@ -74,11 +74,6 @@ SYMBOLS = tuple(INSTRUMENTS)
 
 logger = logging.getLogger(__name__)
 
-# Provider error codes with a status other than the 502 default.
-_PROVIDER_ERROR_STATUS = {
-    "UNSUPPORTED_SYMBOL": 422,
-}
-
 
 def build_provider(settings: Settings) -> OptionsDataProvider:
     """The only place a concrete chain adapter is selected and imported (PRD 4.3)."""
@@ -585,7 +580,7 @@ def create_app(
                 effective = max(retry_after, 60) if retry_after is not None else 300
                 gate.extend_deadline(effective)
                 raise _http_error(503, exc.code, str(exc), effective) from exc
-            status_code = _PROVIDER_ERROR_STATUS.get(exc.code, 502)
+            status_code = 422 if exc.code == "UNSUPPORTED_SYMBOL" else 502
             raise _http_error(status_code, exc.code, str(exc)) from exc
         finally:
             gate.end()

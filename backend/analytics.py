@@ -1,6 +1,7 @@
 """Pure quote filters, BSM, IV, gamma, GEX, surface."""
 
 import math
+from bisect import bisect_left
 from collections import Counter
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -463,10 +464,11 @@ def build_positioning_profiles(
         if strikes and all(pq.quote.open_interest is not None for pq in quotes):
             payouts = {
                 strike: sum(
-                    max(float(strike - pq.quote.strike), 0.0) * (pq.quote.open_interest or 0) * 100
-                    if pq.quote.option_type == "C"
-                    else max(float(pq.quote.strike - strike), 0.0) * (pq.quote.open_interest or 0) * 100
+                    max(float(strike - k if pq.quote.option_type == "C" else k - strike), 0.0)
+                    * (pq.quote.open_interest or 0)
+                    * 100
                     for pq in quotes
+                    if (k := pq.quote.strike) is not None
                 )
                 for strike in strikes
             }
@@ -495,17 +497,13 @@ def build_positioning_profiles(
 def _piecewise_linear(xs: list[float], ws: list[float], x: float) -> float | None:
     if x < xs[0] or x > xs[-1]:
         return None
-    for i in range(len(xs) - 1):
-        if xs[i] <= x <= xs[i + 1]:
-            if x == xs[i]:
-                return ws[i]
-            if x == xs[i + 1]:
-                return ws[i + 1]
-            if xs[i + 1] - xs[i] > MAX_BRIDGE_GAP:
-                return None
-            frac = (x - xs[i]) / (xs[i + 1] - xs[i])
-            return ws[i] + frac * (ws[i + 1] - ws[i])
-    return None
+    j = bisect_left(xs, x)  # xs: one point per strike, strictly increasing
+    if xs[j] == x:
+        return ws[j]
+    if xs[j] - xs[j - 1] > MAX_BRIDGE_GAP:
+        return None
+    frac = (x - xs[j - 1]) / (xs[j] - xs[j - 1])
+    return ws[j - 1] + frac * (ws[j] - ws[j - 1])
 
 
 def _has_adjacent_block(grid_iv: list[list[float | None]]) -> bool:
@@ -709,7 +707,7 @@ def vanna_exposure_by_strike(legs: list[ExposureLeg], spot: float) -> dict[float
 
 
 def build_quality_counts(
-    priced_quotes: tuple[PricedQuote, ...], gex_cells_flat: list[GexCell | None], source_row_count: int
+    priced_quotes: tuple[PricedQuote, ...], gex: GexData, source_row_count: int
 ) -> QualityCounts:
     in_scope = [pq for pq in priced_quotes if pq.exclusion_reason != "OUT_OF_SCOPE"]
     exclusion_counts = dict(Counter(pq.exclusion_reason for pq in priced_quotes if pq.exclusion_reason))
@@ -720,7 +718,7 @@ def build_quality_counts(
         valid_ivs=sum(1 for pq in priced_quotes if pq.iv is not None),
         known_oi_contracts=sum(1 for pq in in_scope if pq.quote.open_interest is not None),
         complete_gex_cells=sum(
-            1 for cell in gex_cells_flat if cell is not None and cell.status == "COMPLETE"
+            1 for row in gex.cells for cell in row if cell is not None and cell.status == "COMPLETE"
         ),
         exclusion_counts=exclusion_counts,
     )
@@ -755,8 +753,7 @@ def analyze_snapshot(
     )
     gex = build_gex(priced, spot)
     surface = build_surface(priced, spot, r, q, valuation_at)
-    flat_cells = [cell for row in gex.cells for cell in row]
-    quality = build_quality_counts(priced, flat_cells, source_row_count)
+    quality = build_quality_counts(priced, gex, source_row_count)
     return priced, gex, surface, quality
 
 
@@ -787,6 +784,5 @@ def analyze_snapshot_v2(
     )
     gex = build_gex(priced, actual_spot)
     surface = build_surface_v2(priced, contexts)
-    flat_cells = [cell for row in gex.cells for cell in row]
-    quality = build_quality_counts(priced, flat_cells, source_row_count)
+    quality = build_quality_counts(priced, gex, source_row_count)
     return priced, gex, surface, quality

@@ -294,6 +294,10 @@ export default function App() {
 					</Card>
 				</>
 			)}
+			<footer className="pt-2 text-center text-xs text-muted-foreground">
+				Personal research tool. Not financial advice. Data may be delayed,
+				incomplete, or wrong.
+			</footer>
 		</div>
 	);
 }
