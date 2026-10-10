@@ -1,4 +1,4 @@
-# ADR-0003: Automated SPY/QQQ dividend schedules
+# ADR-0003: Automated SPY/QQQ/AAPL dividend schedules
 
 Status: accepted (2026-10-09)
 
@@ -40,4 +40,6 @@ quarterly calendar, amount = last actual), so re-typing it weekly is pure toil.
   0.751); declared amounts are not fetched. Special distributions are not
   projected; one in Yahoo's last four breaks the pattern check and stops the
   job.
-- AAPL is unchanged (local review only).
+- AAPL was added on 2026-10-09: ex-date = second Monday of Feb/May/Aug/Nov
+  (matches its last seven ex-dates). Apple usually raises its dividend in
+  May, so the May estimate can be a little low until it is declared.

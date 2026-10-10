@@ -140,11 +140,11 @@ A live config:
 Every non-fixture dividend source needs a schedule for that symbol that was
 reviewed in the last 7 days.
 
-- **SPY and QQQ** get one automatically from
+- **SPY, QQQ, and AAPL** get one automatically from
   [reference/dividend_schedules.json](reference/dividend_schedules.json),
   which the [daily data job](#daily-data-job) updates. Run `git pull` to get
   the latest.
-- **AAPL**, or your own override, goes in `backend/reference_inputs.json`
+- **Your own override** goes in `backend/reference_inputs.json`
   (git-ignored). When both files have a symbol, the newer `reviewed_at` wins.
 
 Fake example:
@@ -189,9 +189,9 @@ something changes.
 - `scripts/update_ratios.py` writes the SPX/SPY and NDX/QQQ ratios to
   [reference/conversion_ratios.json](reference/conversion_ratios.json). They
   are for display only ([ADR-0002](docs/ADR-0002-index-conversion-ratios.md)).
-- `scripts/update_dividends.py` writes the SPY/QQQ dividend schedules. It
-  projects the next ex-date from each fund's usual quarterly date and uses the
-  last paid amount as the estimate
+- `scripts/update_dividends.py` writes the SPY/QQQ/AAPL dividend schedules. It
+  projects the next ex-date from each symbol's usual quarterly date and uses
+  the last paid amount as the estimate
   ([ADR-0003](docs/ADR-0003-automated-dividend-schedules.md)).
 
 If a step gets bad data, it keeps the old file and the run fails, so GitHub
@@ -266,7 +266,7 @@ which points to a bug.
 - [Product requirements](docs/options_analytics_mvp_prd.md)
 - [ADR-0001: pricing inputs, dividends, and GEX units](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)
 - [ADR-0002: SPX/NDX conversion ratios](docs/ADR-0002-index-conversion-ratios.md)
-- [ADR-0003: automated SPY/QQQ dividend schedules](docs/ADR-0003-automated-dividend-schedules.md)
+- [ADR-0003: automated SPY/QQQ/AAPL dividend schedules](docs/ADR-0003-automated-dividend-schedules.md)
 - [ADR-0004: daily heatmap for AI agents](docs/ADR-0004-daily-heatmap-for-agents.md)
 - [ADR-0005: gamma flip and vanna exposure](docs/ADR-0005-gamma-flip-and-vanna.md)
 - [How to read the heatmap](docs/interpret-heatmap.md)
@@ -283,7 +283,7 @@ which points to a bug.
 - **New York Fed SOFR** (`"nyfed_sofr"`): the public rates API.
 - **Yahoo Finance via [yfinance](https://github.com/ranaroussi/yfinance)**
   (Apache-2.0): used only by the daily data job, for the SPX/NDX ratios and
-  SPY/QQQ dividend history. yfinance is unofficial and not linked to Yahoo.
+  SPY/QQQ/AAPL dividend history. yfinance is unofficial and not linked to Yahoo.
   Read [Yahoo's terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html).
   Only derived values are committed, never raw quotes.
 - Fixtures, tests, and screenshots use fake data. Never commit real market

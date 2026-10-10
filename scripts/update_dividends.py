@@ -1,10 +1,10 @@
-"""Write projected SPY/QQQ dividend schedules to reference/dividend_schedules.json.
+"""Write projected SPY/QQQ/AAPL dividend schedules to reference/dividend_schedules.json.
 
     uvx --with yfinance==1.7.0 python scripts/update_dividends.py
 
 Run daily by .github/workflows/reference-update.yml (ADR-0003). Yahoo has
 dividend history only, no announced future dates, so the next event is
-projected: ex-date from each fund's quarterly pattern, amount = last actual
+projected: ex-date from each symbol's quarterly pattern, amount = last actual
 (amount_status "estimated"). The pattern is first checked against Yahoo's
 last four ex-dates; a mismatch means the fund changed its calendar, and the
 script fails without writing, so the backend's 7-day review-age check blocks
@@ -29,6 +29,9 @@ def third_friday(year: int, month: int) -> date:
 
 
 def projected_ex_date(symbol: str, year: int, month: int) -> date:
+    if symbol == "AAPL":
+        first = date(year, month, 1)
+        return first + timedelta(days=(0 - first.weekday()) % 7 + 7)  # second Monday (Feb/May/Aug/Nov)
     friday = third_friday(year, month)
     if symbol == "QQQ":
         return friday + timedelta(days=3)  # Monday after the third Friday
@@ -38,7 +41,8 @@ def projected_ex_date(symbol: str, year: int, month: int) -> date:
 
 
 def quarters_after(d: date):
-    year, month = d.year, (d.month - 1) // 3 * 3 + 3  # quarter-end month of d
+    """(year, month) every 3 months after the month of ex-date `d`."""
+    year, month = d.year, d.month
     while True:
         month += 3
         if month > 12:
@@ -65,7 +69,7 @@ def propose(symbol: str, today: date, now: datetime) -> dict:
         if ex_date >= today:
             events.append(
                 {
-                    "event_id": f"{symbol.lower()}-{year}-q{month // 3}",
+                    "event_id": f"{symbol.lower()}-{year}-{month:02d}",
                     "ex_date": ex_date.isoformat(),
                     "payment_date": None,
                     "amount": f"{last_amount:.3f}",
@@ -91,6 +95,9 @@ def _check() -> None:
     assert projected_ex_date("SPY", 2026, 6) == date(2026, 6, 18)  # Juneteenth Friday
     assert projected_ex_date("QQQ", 2026, 6) == date(2026, 6, 22)
     assert projected_ex_date("QQQ", 2025, 12) == date(2025, 12, 22)
+    assert projected_ex_date("AAPL", 2026, 2) == date(2026, 2, 9)
+    assert projected_ex_date("AAPL", 2026, 8) == date(2026, 8, 10)
+    assert projected_ex_date("AAPL", 2025, 11) == date(2025, 11, 10)
     gen = quarters_after(date(2026, 9, 18))
     assert [next(gen), next(gen)] == [(2026, 12), (2027, 3)]
 
@@ -103,7 +110,7 @@ def main() -> None:
     out = {
         "input_schema_version": 1,
         "manual_rate": None,
-        "schedules": {symbol: propose(symbol, today, now) for symbol in ("QQQ", "SPY")},
+        "schedules": {symbol: propose(symbol, today, now) for symbol in ("AAPL", "QQQ", "SPY")},
     }
     OUT.write_text(json.dumps(out, indent="\t") + "\n")
     print(json.dumps(out))
