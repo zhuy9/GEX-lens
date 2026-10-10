@@ -269,6 +269,11 @@ export default function App() {
 									spot={dashboard.spot}
 									valuationAt={dashboard.valuation_at}
 									conversion={CONVERSIONS[dashboard.symbol]}
+									gammaProfile={
+										dashboard.schema_version === 2
+											? dashboard.gamma_profile
+											: null
+									}
 								/>
 							</ChartErrorBoundary>
 						</CardContent>

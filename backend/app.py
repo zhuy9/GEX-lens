@@ -32,6 +32,7 @@ from analytics import (
     REPRICE_TOLERANCE,
     analyze_snapshot_v2,
     build_expiry_pricing_context,
+    build_gamma_profile,
     build_positioning_profiles,
 )
 from instruments import INSTRUMENTS
@@ -412,6 +413,7 @@ def _collect_and_save(
         gex=gex,
         surface=surface,
         positioning=positioning,
+        gamma_profile=build_gamma_profile(priced, contexts, snapshot.underlying_price),
         calculation_input_hash=_calculation_input_hash(
             contracts=snapshot.contracts,
             actual_spot=snapshot.underlying_price,

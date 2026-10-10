@@ -216,6 +216,14 @@ export interface DashboardResponseV1 extends DashboardResponseBase {
 	parameters: Parameters;
 }
 
+/** ADR-0005: whole-snapshot gamma regime and vanna exposure. */
+export interface GammaProfile {
+	net_gex_at_spot: number; // USD per 1% move
+	gamma_flip: number | null; // nearest price where net GEX changes sign, or null
+	vanna_exposure: number; // USD of hedge change per +1 IV point
+	top_vanna_strikes: [number, number][];
+}
+
 export interface DashboardResponseV2 extends DashboardResponseBase {
 	schema_version: 2;
 	spot_asof_date: string | null;
@@ -224,6 +232,7 @@ export interface DashboardResponseV2 extends DashboardResponseBase {
 	market_inputs: MarketInputs;
 	pricing_contexts: ExpiryPricingContext[];
 	positioning: PositioningProfile[];
+	gamma_profile?: GammaProfile | null; // absent on snapshots saved before ADR-0005
 	calculation_input_hash: string;
 }
 

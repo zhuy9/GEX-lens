@@ -27,9 +27,14 @@ the GEX heatmap:
 
 `ExposureLeg` carries one priced contract with its expiry's time, rate, and
 PV of dividends, so the model spot is `spot - PV(dividends)`, as in ADR-0001
-Section 9. `scripts/daily_heatmap.py` builds the legs from its own temporary
-database and prints the results and draws the flip line. They are **not**
-saved in snapshots, sent by the API, or shown in the app.
+Section 9.
+
+Update (2026-10-09): `build_gamma_profile` runs on every refresh and saves
+the result in the snapshot as an optional `gamma_profile` field
+(`net_gex_at_spot`, `gamma_flip`, `vanna_exposure`, `top_vanna_strikes`).
+Snapshots saved earlier simply lack it. The dashboard shows the regime line
+and an amber gamma-flip row on the heatmap; `scripts/daily_heatmap.py` reads
+the same saved values.
 
 How to read the output:
 
@@ -43,9 +48,9 @@ How to read the output:
 ## PRD provisions overridden
 
 - PRD section 1 "Do not implement: gamma-flip/profile calculations": allowed
-  for the daily script's summary only.
+  for the dashboard and the daily summary.
 - PRD Section 6.3 "Calculate only IV and gamma; delta, theta, vega, and rho are
-  out of scope": vanna is added, for the same summary only.
+  out of scope": vanna is added, for the same uses.
 
 ## Limits
 

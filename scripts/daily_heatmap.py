@@ -19,7 +19,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import duckdb
 import matplotlib
 
 matplotlib.use("Agg")  # render to files only
@@ -33,7 +32,6 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 import app  # noqa: E402
 import storage  # noqa: E402
-from analytics import ExposureLeg, gamma_flip, net_gex_at, vanna_exposure_by_strike  # noqa: E402
 from models import Settings  # noqa: E402
 
 SYMBOLS = ("SPY", "QQQ")
@@ -47,8 +45,8 @@ CMAP.set_bad("#ffffff")
 LEVELS = (("Call wall", "call_wall_strike"), ("Put wall", "put_wall_strike"), ("Max pain", "max_pain_strike"))
 
 
-def fetch(fixture: bool) -> dict[str, tuple[dict, list[ExposureLeg]]]:
-    """Dashboard plus the priced contracts (for flip/VEX) per symbol."""
+def fetch(fixture: bool) -> dict[str, dict]:
+    """One fresh dashboard per symbol (gamma_profile included, ADR-0005)."""
     tmp = Path(tempfile.mkdtemp())
     empty_inputs = {"input_schema_version": 1, "manual_rate": None, "schedules": {}}
     (tmp / "reference_inputs.json").write_text(json.dumps(empty_inputs))
@@ -67,7 +65,7 @@ def fetch(fixture: bool) -> dict[str, tuple[dict, list[ExposureLeg]]]:
     rate_provider = app.build_rate_provider(settings.rate_source)
     dividend_providers = {s: app.build_dividend_provider(v) for s, v in settings.dividend_sources.items()}
     try:
-        dashboards = {
+        return {
             symbol: app._collect_and_save(
                 settings,
                 provider,
@@ -83,27 +81,6 @@ def fetch(fixture: bool) -> dict[str, tuple[dict, list[ExposureLeg]]]:
         for p in (provider, rate_provider, *dividend_providers.values()):
             if close := getattr(p, "close", None):
                 close()
-
-    out = {}
-    with duckdb.connect(settings.db_path, read_only=True) as conn:
-        for symbol, d in dashboards.items():
-            ctx = {c["expiration"]: c for c in d["pricing_contexts"]}
-            rows = conn.execute(
-                "SELECT expiration, strike, option_type, open_interest, iv FROM option_quotes"
-                " WHERE snapshot_id = ? AND exclusion_reason IS NULL AND iv IS NOT NULL"
-                " AND open_interest IS NOT NULL",
-                [d["snapshot_id"]],
-            ).fetchall()
-            legs = []
-            for exp, strike, kind, oi, iv in rows:
-                c = ctx[exp.isoformat()]
-                legs.append(
-                    ExposureLeg(
-                        kind, float(strike), oi, iv, c["T"], c["r_cc"], c["q_continuous"], c["pv_dividends"]
-                    )
-                )
-            out[symbol] = (d, legs)
-    return out
 
 
 def money(value: float) -> str:
@@ -133,7 +110,7 @@ def as_of(d: dict) -> str:
     return f"price date {d.get('spot_asof_date') or 'unknown'} · fetched {ny_time(d['collected_at'])}"
 
 
-def facts(d: dict, legs: list[ExposureLeg], conversion: dict | None) -> dict:
+def facts(d: dict, conversion: dict | None) -> dict:
     """Every number the summary and the image use. Covers all strikes and
     expirations in the snapshot (1-30 days), not only the drawn window."""
     gex, spot = d["gex"], d["spot"]
@@ -155,16 +132,16 @@ def facts(d: dict, legs: list[ExposureLeg], conversion: dict | None) -> dict:
     ranked = sorted(by_strike.items(), key=lambda kv: kv[1])
     p0 = d["positioning"][0] if d["positioning"] else {}
     dte = {p["expiration"]: p["dte"] for p in d["positioning"]}
-    vex = vanna_exposure_by_strike(legs, spot)
+    gp = d["gamma_profile"]
     return {
         "spot": spot,
         "index": f"~{conversion['index']} {spot * conversion['ratio']:,.2f}" if conversion else "",
-        "net_gex": net_gex_at(legs, spot),
+        "net_gex": gp["net_gex_at_spot"],
         "near_gex": sum(v for k, v in by_strike.items() if abs(float(k) / spot - 1) <= 0.02),
-        "flip": gamma_flip(legs, spot),
+        "flip": gp["gamma_flip"],
         "where": where,
-        "vex": sum(vex.values()),
-        "top_vex": sorted(vex.items(), key=lambda kv: -abs(kv[1]))[:3],
+        "vex": gp["vanna_exposure"],
+        "top_vex": gp["top_vanna_strikes"],
         "top_pos": [(k, v) for k, v in ranked[::-1][:3] if v > 0],
         "top_neg": [(k, v) for k, v in ranked[:3] if v < 0],
         "walls": ", ".join(f"{n} {where(p0[k])}" if p0.get(k) else f"{n} n/a" for n, k in LEVELS),
@@ -343,8 +320,8 @@ def main() -> None:
         "Cells: call-minus-put GEX, USD per 1% move (+ call gamma, - put gamma).",
         "",
     ]
-    for symbol, (d, legs) in data.items():
-        f = facts(d, legs, conversions.get(symbol))
+    for symbol, d in data.items():
+        f = facts(d, conversions.get(symbol))
         image = EXPORTS / f"heatmap-{symbol.lower()}.png"
         render(symbol, d, f, conversions.get(symbol), fixture, image)
         lines = summary(symbol, d, f)

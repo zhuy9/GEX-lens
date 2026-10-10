@@ -49,8 +49,9 @@ feature and adds no polling to the app.
 ## ADR-0005
 
 [ADR-0005](docs/ADR-0005-gamma-flip-and-vanna.md) adds the gamma flip and
-vanna exposure (VEX) as pure functions in `analytics.py`. Only the daily
-script uses them; they are not saved in snapshots or shown in the app.
+vanna exposure (VEX) as pure functions in `analytics.py`. Each refresh saves
+them as the snapshot's optional `gamma_profile`; the dashboard and the daily
+script both show them.
 
 ## Plan and milestone rules
 

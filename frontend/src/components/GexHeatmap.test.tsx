@@ -338,3 +338,30 @@ describe("ADR-0002: index equivalents on the strike axis", () => {
 		expect(screen.getByText(/SPX ≈ 7811\.49/)).toBeTruthy();
 	});
 });
+
+describe("ADR-0005: gamma regime and flip", () => {
+	it("states the regime and draws a flip row inside the shown strikes", () => {
+		render(
+			<GexHeatmap
+				gex={makeGex({
+					strikes: ["95.0", "100.0", "105.0"],
+					cells: [[COMPLETE_CELL, COMPLETE_CELL, COMPLETE_CELL]],
+				})}
+				mode="signed"
+				unit="per_1pct"
+				spot={101}
+				valuationAt="2026-09-17T15:00:00Z"
+				gammaProfile={{
+					net_gex_at_spot: 2_500_000_000,
+					gamma_flip: 97.5,
+					vanna_exposure: -40_000_000,
+					top_vanna_strikes: [],
+				}}
+			/>,
+		);
+		expect(screen.getByText("Positive gamma")).toBeTruthy();
+		expect(screen.getByText(/net \$2\.50B at\s+spot/)).toBeTruthy();
+		expect(screen.getByText(/VEX -\$40\.0M per IV point/)).toBeTruthy();
+		expect(screen.getByText("Gamma flip $97.50")).toBeTruthy();
+	});
+});

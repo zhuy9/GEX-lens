@@ -788,3 +788,12 @@ def test_newest_of_local_and_auto_schedule_wins(
         response = client.post("/api/dashboard/SPY/refresh")
     body = response.json()
     assert body.get("error", {}).get("code") == error_code, body
+
+
+def test_refresh_saves_gamma_profile(tmp_path):
+    # ADR-0005: computed on refresh, saved with the snapshot, returned by GET.
+    client = TestClient(create_app(make_settings(str(tmp_path / "t.duckdb"))))
+    profile = client.post("/api/dashboard/SPY/refresh").json()["gamma_profile"]
+    assert math.isfinite(profile["net_gex_at_spot"]) and math.isfinite(profile["vanna_exposure"])
+    assert profile["gamma_flip"] is None or 0 < profile["gamma_flip"]
+    assert client.get("/api/dashboard/SPY").json()["gamma_profile"] == profile

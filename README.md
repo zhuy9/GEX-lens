@@ -8,8 +8,10 @@ fetches one option-chain snapshot, prices it, saves it, and shows:
 
 - a GEX heatmap by strike and expiration, with SPX/NDX levels next to SPY/QQQ
   strikes,
-- a 3D IV surface, and
-- a positioning profile (call wall, put wall, GEX peaks, max pain).
+- a 3D IV surface,
+- a positioning profile (call wall, put wall, GEX peaks, max pain), and
+- the gamma regime: positive or negative gamma, the gamma flip, and vanna
+  exposure (VEX).
 
 It covers expirations 1-30 days out. Pricing is a Black-Scholes-Merton model
 with cash dividends and a SOFR rate

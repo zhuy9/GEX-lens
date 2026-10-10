@@ -1,6 +1,12 @@
 import { memo, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { GexCell, GexData, GexMode, MoveUnit } from "@/types";
+import type {
+	GammaProfile,
+	GexCell,
+	GexData,
+	GexMode,
+	MoveUnit,
+} from "@/types";
 
 interface GexHeatmapProps {
 	gex: GexData;
@@ -9,6 +15,7 @@ interface GexHeatmapProps {
 	spot: number;
 	valuationAt: string;
 	conversion?: IndexConversion;
+	gammaProfile?: GammaProfile | null;
 }
 
 /** Display-only ETF -> index ratio from reference/conversion_ratios.json (ADR-0002). */
@@ -40,6 +47,8 @@ function fmtDollarsCompact(value: number | null): string {
 	if (value === null) return "";
 	const sign = value < 0 ? "-" : "";
 	const abs = Math.abs(value);
+	if (abs >= 1000 * MILLIONS)
+		return `${sign}$${(abs / MILLIONS / 1000).toFixed(2)}B`;
 	if (abs >= MILLIONS) return `${sign}$${(abs / MILLIONS).toFixed(1)}M`;
 	if (abs >= THOUSAND) return `${sign}$${(abs / THOUSAND).toFixed(0)}K`;
 	return `${sign}$${abs.toFixed(0)}`;
@@ -159,6 +168,7 @@ export const GexHeatmap = memo(function GexHeatmap({
 	spot,
 	valuationAt,
 	conversion,
+	gammaProfile,
 }: GexHeatmapProps) {
 	const [expanded, setExpanded] = useState(false);
 	const factor = displayFactor(unit, spot);
@@ -204,16 +214,33 @@ export const GexHeatmap = memo(function GexHeatmap({
 
 	// Insert a divider row at spot's exact position (it usually falls between
 	// two strikes, not on one).
-	const rows: (number | "spot")[] = [];
-	let spotPlaced = false;
+	// The gamma flip gets a row too, but only inside the shown strikes; the
+	// caption above always states it.
+	const flip = gammaProfile?.gamma_flip ?? null;
+	const top = Number(gex.strikes[rowIndices[0]]);
+	const bottom = Number(gex.strikes[rowIndices[rowIndices.length - 1]]);
+	const marks: { key: "spot" | "flip"; level: number }[] = [
+		{ key: "spot" as const, level: spot },
+		...(flip !== null && flip <= top && flip >= bottom
+			? [{ key: "flip" as const, level: flip }]
+			: []),
+	].sort((a, b) => b.level - a.level);
+	const flipLabel =
+		flip === null
+			? ""
+			: `${fmtStrike(flip.toFixed(2))}${conversion ? ` · ${conversion.index} ≈ ${(flip * conversion.ratio).toFixed(2)}` : ""}`;
+	const rows: (number | "spot" | "flip")[] = [];
 	for (const strikeIndex of rowIndices) {
-		if (!spotPlaced && Number(gex.strikes[strikeIndex]) < spot) {
-			rows.push("spot");
-			spotPlaced = true;
+		while (
+			marks.length > 0 &&
+			Number(gex.strikes[strikeIndex]) < marks[0].level
+		) {
+			rows.push(marks[0].key);
+			marks.shift();
 		}
 		rows.push(strikeIndex);
 	}
-	if (!spotPlaced) rows.push("spot");
+	for (const mark of marks) rows.push(mark.key);
 
 	return (
 		<div className="flex flex-col gap-2">
@@ -249,6 +276,26 @@ export const GexHeatmap = memo(function GexHeatmap({
 					{expanded ? "Collapse" : `Expand (${gex.strikes.length} strikes)`}
 				</Button>
 			</div>
+
+			{gammaProfile && (
+				<div className="text-xs">
+					<span
+						className={
+							gammaProfile.net_gex_at_spot > 0
+								? "font-medium text-green-700"
+								: "font-medium text-red-700"
+						}
+					>
+						{gammaProfile.net_gex_at_spot > 0 ? "Positive" : "Negative"} gamma
+					</span>{" "}
+					(net {fmtDollarsCompact(gammaProfile.net_gex_at_spot * factor)} at
+					spot) · Gamma flip{" "}
+					{flip === null
+						? "none within ±10%"
+						: `${fmtStrike(String(flip))}${conversion ? ` (~${conversion.index} ${Math.round(flip * conversion.ratio).toLocaleString()})` : ""}, ${((flip / spot - 1) * 100).toFixed(1)}% from spot`}{" "}
+					· VEX {fmtDollarsCompact(gammaProfile.vanna_exposure)} per IV point
+				</div>
+			)}
 
 			<div className="text-xs text-muted-foreground">
 				USD delta-notional change per{" "}
@@ -300,6 +347,18 @@ export const GexHeatmap = memo(function GexHeatmap({
 					</thead>
 					<tbody>
 						{rows.map((row) => {
+							if (row === "flip") {
+								return (
+									<tr key="flip" className="bg-amber-50">
+										<td
+											colSpan={gex.expirations.length + 1}
+											className="sticky left-0 border-t border-b border-dashed border-amber-600 px-2 py-1 text-center font-medium text-amber-700"
+										>
+											Gamma flip {flipLabel}
+										</td>
+									</tr>
+								);
+							}
 							if (row === "spot") {
 								return (
 									<tr key="spot" className="bg-primary/10">

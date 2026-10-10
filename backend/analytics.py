@@ -13,6 +13,7 @@ from scipy.special import ndtr
 from models import (
     SECONDS_PER_YEAR,
     ExpiryPricingContext,
+    GammaProfile,
     GexCell,
     GexData,
     OptionQuote,
@@ -704,6 +705,35 @@ def vanna_exposure_by_strike(legs: list[ExposureLeg], spot: float) -> dict[float
             value = _leg_sign(leg) * vanna * leg.open_interest * 100 * spot * 0.01
             by_strike[leg.strike] = by_strike.get(leg.strike, 0.0) + value
     return by_strike
+
+
+def build_gamma_profile(
+    priced_quotes: tuple[PricedQuote, ...], contexts: dict[date, ExpiryPricingContext], spot: float
+) -> GammaProfile:
+    """ADR-0005 summary over every priced contract with IV and open interest."""
+    legs = []
+    for pq in priced_quotes:
+        if pq.exclusion_reason is None and pq.iv is not None and pq.quote.open_interest is not None:
+            c = contexts[pq.quote.expiration]
+            legs.append(
+                ExposureLeg(
+                    pq.quote.option_type,
+                    float(pq.quote.strike),
+                    pq.quote.open_interest,
+                    pq.iv,
+                    c.T,
+                    c.r_cc,
+                    c.q_continuous,
+                    c.pv_dividends,
+                )
+            )
+    vex = vanna_exposure_by_strike(legs, spot)
+    return GammaProfile(
+        net_gex_at_spot=net_gex_at(legs, spot),
+        gamma_flip=gamma_flip(legs, spot),
+        vanna_exposure=sum(vex.values()),
+        top_vanna_strikes=tuple(sorted(vex.items(), key=lambda kv: -abs(kv[1]))[:3]),
+    )
 
 
 def build_quality_counts(

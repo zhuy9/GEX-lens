@@ -581,6 +581,18 @@ class DashboardResponseV1(BaseModel):
     surface: SurfaceData
 
 
+class GammaProfile(BaseModel):
+    """ADR-0005: whole-snapshot gamma regime and vanna exposure. Same model,
+    inputs, and call-minus-put sign as the GEX heatmap."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    net_gex_at_spot: float  # USD per 1% move
+    gamma_flip: float | None  # nearest spot where net GEX changes sign (within +/-10%), or None
+    vanna_exposure: float  # USD of hedge change per +1 IV point
+    top_vanna_strikes: tuple[tuple[float, float], ...]  # (strike, VEX), largest |VEX| first
+
+
 class DashboardResponseV2(BaseModel):
     """Cash-PV BSM dashboard (ADR-0001 Section 11.1). Every new refresh
     writes this; a v1 row is never upgraded in place."""
@@ -610,3 +622,4 @@ class DashboardResponseV2(BaseModel):
     surface: SurfaceData
     calculation_input_hash: str
     positioning: tuple[PositioningProfile, ...] = ()
+    gamma_profile: GammaProfile | None = None  # absent on snapshots saved before ADR-0005
