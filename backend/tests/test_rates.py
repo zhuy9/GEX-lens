@@ -1,5 +1,6 @@
 """N2: SOFR quote conversion, response validation, and eligibility rules."""
 
+import json
 import math
 from datetime import UTC, date, datetime
 
@@ -23,7 +24,8 @@ def _handler(ref_rates=None, status_code=200, text=None):
     def handler(request):
         if text is not None:
             return httpx.Response(status_code, text=text)
-        return httpx.Response(status_code, json={"refRates": ref_rates or []})
+        # httpx >=0.28 rejects NaN/inf in json=, so encode manually for the non-finite tests
+        return httpx.Response(status_code, text=json.dumps({"refRates": ref_rates or []}))
 
     return handler
 
