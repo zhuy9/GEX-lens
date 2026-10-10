@@ -8,6 +8,14 @@ interface GexHeatmapProps {
 	unit: MoveUnit;
 	spot: number;
 	valuationAt: string;
+	conversion?: IndexConversion;
+}
+
+/** Display-only ETF -> index ratio from conversion_ratios.json (ADR-0002). */
+export interface IndexConversion {
+	index: string;
+	ratio: number;
+	asof: string;
 }
 
 const MILLIONS = 1_000_000;
@@ -150,6 +158,7 @@ export const GexHeatmap = memo(function GexHeatmap({
 	unit,
 	spot,
 	valuationAt,
+	conversion,
 }: GexHeatmapProps) {
 	const [expanded, setExpanded] = useState(false);
 	const factor = displayFactor(unit, spot);
@@ -260,8 +269,20 @@ export const GexHeatmap = memo(function GexHeatmap({
 				<table className="w-full border-collapse text-xs">
 					<thead>
 						<tr>
-							<th className="sticky top-0 left-0 z-20 border-r border-b bg-background px-2 py-1.5 text-left">
+							<th
+								className="sticky top-0 left-0 z-20 border-r border-b bg-background px-2 py-1.5 text-left"
+								title={
+									conversion &&
+									`${conversion.index} ≈ strike × ${conversion.ratio} (Yahoo close, ${conversion.asof})`
+								}
+							>
 								Strike
+								{conversion && (
+									<span className="font-normal text-muted-foreground">
+										{" "}
+										· {conversion.index}
+									</span>
+								)}
 							</th>
 							{gex.expirations.map((expiration) => (
 								<th
@@ -286,6 +307,8 @@ export const GexHeatmap = memo(function GexHeatmap({
 											className="sticky left-0 border-t border-b border-dashed border-primary px-2 py-1 text-center font-medium text-primary"
 										>
 											Underlying ${spot.toFixed(2)}
+											{conversion &&
+												` · ${conversion.index} ≈ ${(spot * conversion.ratio).toFixed(2)}`}
 										</td>
 									</tr>
 								);
@@ -296,6 +319,12 @@ export const GexHeatmap = memo(function GexHeatmap({
 								<tr key={strike}>
 									<td className="sticky left-0 z-10 border-r bg-background px-2 py-1 font-medium whitespace-nowrap">
 										{fmtStrike(strike)}
+										{conversion && (
+											<span className="text-muted-foreground">
+												{" "}
+												· {Math.round(Number(strike) * conversion.ratio)}
+											</span>
+										)}
 									</td>
 									{gex.expirations.map((expiration, expIndex) => {
 										const cell = gex.cells[expIndex][strikeIndex];

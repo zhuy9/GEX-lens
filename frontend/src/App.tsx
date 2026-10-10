@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { ChartErrorBoundary } from "@/components/ChartErrorBoundary";
-import { GexHeatmap } from "@/components/GexHeatmap";
+import { GexHeatmap, type IndexConversion } from "@/components/GexHeatmap";
 import { PositioningProfile } from "@/components/PositioningProfile";
 import { PricingInputsPanel } from "@/components/PricingInputsPanel";
 import { PanelWarnings, SnapshotMeta } from "@/components/SnapshotMeta";
@@ -21,6 +21,7 @@ import { useDashboard } from "@/hooks/useDashboard";
 import { useTick } from "@/hooks/useTick";
 import { secondsUntil } from "@/lib/time";
 import type { DashboardResponse, GexMode, MoveUnit } from "@/types";
+import conversionRatios from "./conversion_ratios.json";
 
 // Only this panel needs Plotly; the GEX heatmap is a plain HTML table. The
 // production build is a single ~5MB (~1.5MB gzipped) bundle dominated by
@@ -29,6 +30,14 @@ import type { DashboardResponse, GexMode, MoveUnit } from "@/types";
 const IvSurface = lazy(() =>
 	import("@/components/IvSurface").then((m) => ({ default: m.IvSurface })),
 );
+
+const RATIOS: Partial<Record<string, { index: string; ratio: number }>> =
+	conversionRatios.ratios;
+
+function conversionFor(symbol: string): IndexConversion | undefined {
+	const entry = RATIOS[symbol];
+	return entry && { ...entry, asof: conversionRatios.asof };
+}
 
 export default function App() {
 	const {
@@ -261,6 +270,7 @@ export default function App() {
 									unit={moveUnit}
 									spot={dashboard.spot}
 									valuationAt={dashboard.valuation_at}
+									conversion={conversionFor(dashboard.symbol)}
 								/>
 							</ChartErrorBoundary>
 						</CardContent>

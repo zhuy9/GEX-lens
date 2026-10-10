@@ -23,6 +23,13 @@ ADR-0001 is accepted and implemented. It overrides the PRD provisions
 identified in ADR-0001 Section 3. All other PRD provisions remain in force.
 Where ADR-0001 and the PRD disagree, ADR-0001 wins.
 
+## ADR-0002
+
+[ADR-0002](docs/ADR-0002-index-conversion-ratios.md) adds a daily GitHub
+Action that writes display-only SPX/SPY and NDX/QQQ ratios (Yahoo via
+yfinance) to `frontend/src/conversion_ratios.json`. yfinance never enters the
+backend; the ratios never feed spot or analytics.
+
 ## Plan and milestone rules
 
 - PRD milestones M0-M5 are done; ADR-0001 milestones M0-M6 (its own Section

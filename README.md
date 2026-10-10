@@ -271,6 +271,16 @@ Current build/test status is reported by GitHub Actions.
   here grants a data license. Review [Nasdaq's terms](https://www.nasdaq.com/legal)
   yourself before using `"nasdaq"` or `"nasdaq_dividends"`.
 - **New York Fed SOFR** (`"nyfed_sofr"`): the public rates API.
+- **Yahoo Finance via [yfinance](https://github.com/ranaroussi/yfinance)**
+  (Apache-2.0): the daily SPX/SPY and NDX/QQQ ratios in
+  [frontend/src/conversion_ratios.json](frontend/src/conversion_ratios.json),
+  refreshed after each close by
+  [.github/workflows/ratio-update.yml](.github/workflows/ratio-update.yml).
+  Display only (index equivalents on the heatmap's strike axis); never used
+  as spot or in any calculation. yfinance is an unofficial library, not
+  affiliated with or endorsed by Yahoo; review
+  [Yahoo's terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html)
+  yourself. Only the two derived ratios are committed, never raw quotes.
 - Fixtures, tests, and screenshots use synthetic data only. Never commit
   captured market-data responses, databases, credentials, or exports.
 

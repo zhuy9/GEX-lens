@@ -317,3 +317,24 @@ describe("ADR-0001 M1: move-unit display conversion", () => {
 		expect(before.some((c) => c.background !== "")).toBe(true); // non-vacuous
 	});
 });
+
+describe("ADR-0002: index equivalents on the strike axis", () => {
+	it("shows each strike and the spot row converted by the ratio", () => {
+		render(
+			<GexHeatmap
+				gex={makeGex({ strikes: ["780.0"] })}
+				mode="signed"
+				unit="per_1pct"
+				spot={778.57}
+				valuationAt="2026-09-17T15:00:00Z"
+				conversion={{
+					index: "SPX",
+					ratio: 10.03313,
+					asof: "2026-10-09T19:59:00Z",
+				}}
+			/>,
+		);
+		expect(screen.getByText("· 7826", { exact: false })).toBeTruthy();
+		expect(screen.getByText(/SPX ≈ 7811\.49/)).toBeTruthy();
+	});
+});

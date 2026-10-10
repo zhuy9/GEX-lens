@@ -1,0 +1,31 @@
+name: Update conversion ratios
+
+# ADR-0002: once a day after the close, refresh the display-only SPX/SPY and
+# NDX/QQQ ratios from Yahoo (yfinance). Commits only when they change; a
+# failed fetch fails the run and leaves the last committed ratios in place.
+
+on:
+  schedule:
+    - cron: "0 22 * * 1-5" # after the 16:00 ET close in both EDT and EST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install yfinance==1.7.0
+      - run: python .github/scripts/update_ratios.py
+      - name: Commit if changed
+        run: |
+          git diff --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: update conversion ratios"
+          git push
