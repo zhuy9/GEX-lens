@@ -1,6 +1,8 @@
 fastapi==0.143.0
 uvicorn==0.54.0
 httpx==0.28.1
+# Used only by starlette.testclient in tests (it warns when falling back to httpx).
+httpx2==2.13.1
 pydantic==2.14.0
 numpy==2.5.3
 scipy==1.18.1
