@@ -41,9 +41,16 @@ the newer `reviewed_at` of that file and the local `reference_inputs.json`.
 
 [ADR-0004](docs/ADR-0004-daily-heatmap-for-agents.md) adds
 `scripts/daily_heatmap.py`: one command an outside agent (Muse) runs once a
-day to fetch SPY/QQQ from Nasdaq and write a screenshot-ready
-`exports/heatmap.html`. It reuses the backend refresh code; it is not a server
+day to fetch SPY/QQQ from Nasdaq, print the summary facts, and save one PNG
+per symbol (matplotlib, `scripts/requirements.txt`; never a backend
+dependency). It reuses the backend refresh code; it is not a server
 feature and adds no polling to the app.
+
+## ADR-0005
+
+[ADR-0005](docs/ADR-0005-gamma-flip-and-vanna.md) adds the gamma flip and
+vanna exposure (VEX) as pure functions in `analytics.py`. Only the daily
+script uses them; they are not saved in snapshots or shown in the app.
 
 ## Plan and milestone rules
 

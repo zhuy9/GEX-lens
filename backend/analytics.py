@@ -636,6 +636,78 @@ def build_surface_v2(
     return _build_surface_from_forwards(priced_quotes, time_and_forward)
 
 
+# --- ADR-0005: gamma flip and vanna exposure (summary-only, not saved) ------
+
+FLIP_GRID: tuple[float, ...] = tuple(round(-0.10 + 0.0025 * i, 4) for i in range(81))  # spot -10%..+10%
+
+
+class ExposureLeg(NamedTuple):
+    """One priced contract plus its expiry's pricing inputs: enough to
+    re-price gamma or vanna at another spot with the same model."""
+
+    option_type: str
+    strike: float
+    open_interest: int
+    iv: float
+    t: float
+    r: float
+    q: float
+    pv_dividends: float
+
+
+def bsm_vanna(s: float, k: float, t: float, r: float, q: float, sigma: float) -> float:
+    """dDelta/dSigma per share, per 1.00 of volatility (same for calls and puts)."""
+    sqrt_t = math.sqrt(t)
+    d1 = (math.log(s / k) + (r - q + 0.5 * sigma * sigma) * t) / (sigma * sqrt_t)
+    return -math.exp(-q * t) * fast_pdf(d1) * (d1 - sigma * sqrt_t) / sigma
+
+
+def _leg_sign(leg: ExposureLeg) -> int:
+    return 1 if leg.option_type == "C" else -1  # same call-minus-put convention as signed_proxy
+
+
+def net_gex_at(legs: list[ExposureLeg], spot: float) -> float:
+    """Signed GEX per 1% move if the underlying were at `spot`, each
+    contract's IV held fixed (sticky strike). At the snapshot spot this is
+    the same per-contract formula build_gex uses."""
+    total = 0.0
+    for leg in legs:
+        model_spot = spot - leg.pv_dividends
+        if model_spot > 0:
+            gamma = bsm_gamma(model_spot, leg.strike, leg.t, leg.r, leg.q, leg.iv)
+            total += _leg_sign(leg) * gamma * leg.open_interest * 100 * spot * spot * 0.01
+    return total
+
+
+def gamma_flip(legs: list[ExposureLeg], spot: float) -> float | None:
+    """The spot level nearest `spot` where net GEX changes sign, searched
+    over FLIP_GRID and linearly interpolated; None if it never changes sign."""
+    # ponytail: pure-Python loop, ~1s for 9k contracts x 81 levels; vectorize with numpy if it grows.
+    levels = [spot * (1 + m) for m in FLIP_GRID]
+    values = [net_gex_at(legs, x) for x in levels]
+    crossings: list[float] = []
+    for i in range(len(levels) - 1):
+        lo, hi, v_lo, v_hi = levels[i], levels[i + 1], values[i], values[i + 1]
+        if v_lo == 0:
+            crossings.append(lo)
+        elif v_lo * v_hi < 0:
+            crossings.append(lo + (hi - lo) * v_lo / (v_lo - v_hi))
+    return min((abs(x - spot), x) for x in crossings)[1] if crossings else None
+
+
+def vanna_exposure_by_strike(legs: list[ExposureLeg], spot: float) -> dict[float, float]:
+    """Signed vanna exposure (VEX): dollars of hedge (delta notional) change
+    per +1 volatility point, calls positive and puts negative, by strike."""
+    by_strike: dict[float, float] = {}
+    for leg in legs:
+        model_spot = spot - leg.pv_dividends
+        if model_spot > 0:
+            vanna = bsm_vanna(model_spot, leg.strike, leg.t, leg.r, leg.q, leg.iv)
+            value = _leg_sign(leg) * vanna * leg.open_interest * 100 * spot * 0.01
+            by_strike[leg.strike] = by_strike.get(leg.strike, 0.0) + value
+    return by_strike
+
+
 def build_quality_counts(
     priced_quotes: tuple[PricedQuote, ...], gex_cells_flat: list[GexCell | None], source_row_count: int
 ) -> QualityCounts:

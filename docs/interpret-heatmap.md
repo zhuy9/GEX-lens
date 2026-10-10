@@ -69,7 +69,41 @@ What this means for reading the heatmap:
 - **A big value tomorrow but nothing after it** means that level only matters
   until tomorrow's close.
 
-## 5. What the research says
+## 5. Gamma flip and vanna exposure (VEX)
+
+The script prints both for SPY and QQQ ([ADR-0005](ADR-0005-gamma-flip-and-vanna.md)).
+
+**Environment and gamma flip.** The script adds up the GEX of every
+contract, then repeats that as if price were higher or lower (-10% to +10%).
+
+- **Positive gamma environment** (net GEX at spot above zero): hedging tends
+  to damp moves. Expect more back-and-forth trading.
+- **Negative gamma environment** (below zero): hedging tends to add to moves.
+  Expect bigger, trend-like moves.
+- **Gamma flip**: the nearest price where net GEX changes sign. On the image
+  it is the orange dashed line. Usually the flip is below spot in a positive
+  environment: if price falls through it, the market moves into negative
+  gamma.
+- **Flip very close to spot** (within about 0.5%): the regime is fragile. A
+  small move can switch it.
+- **No flip within ±10%**: the regime is unlikely to change in normal days.
+
+**Vanna exposure (VEX).** Vanna is how much an option's delta changes when IV
+changes. VEX adds it up across contracts, in dollars of hedging per 1 IV
+point, with the same call-positive/put-negative sign.
+
+- **VEX > 0**: if IV falls (often after an event, or in a calm rally), hedging
+  **buys** stock; if IV jumps (often in a sell-off), hedging **sells**. This
+  is the "vanna rally" idea when IV drops.
+- **VEX < 0**: the reverse.
+- VEX matters most around events (Fed, CPI, earnings) and into big
+  expirations, when IV moves the most.
+
+Limits: IV is held fixed per contract while price moves, so in a real
+sell-off (where IV rises) the true flip can be different. Only 1-30 day
+expirations are counted, so numbers will differ from vendor sites.
+
+## 6. What the research says
 
 | Claim | Evidence |
 |---|---|
@@ -78,44 +112,51 @@ What this means for reading the heatmap:
 | Price "pins" to strikes with big open interest on expiration day | Good. Ni, Pearson, Poteshman (2005): stocks close at strikes on expiration days more often than chance. Not every time. |
 | 0DTE (same-day) options make the market unstable | Weak. Dim, Eraker, Vilkov (2024) found little evidence. (This app does not include 0DTE.) |
 | Exact call wall / put wall levels hold | Weak. Popular with traders, little formal research. |
-| "Zero-gamma flip" level, vanna and charm flows into expiration | Mostly vendor commentary, not peer-reviewed. |
+| "Zero-gamma flip" level, vanna and charm flows into expiration | Mostly vendor commentary, not peer-reviewed. The positive/negative gamma regime behind the flip is supported by the papers above. |
 
 Bottom line: GEX tells you about the **likely size and style** of moves
 (calm vs. fast). It does **not** tell you the direction.
 
-## 6. Common mistakes
+## 7. Common mistakes
 
 - Reading GEX as volume or as buy/sell orders.
 - Treating a wall as a guaranteed turning point.
 - Ignoring the date: a big level that expires tomorrow is gone the day after.
 - Forgetting the snapshot is from the last close if you read it before the
   open, and that open interest is updated only once a day.
+- Treating the gamma flip as an exact line. It is an estimate that moves
+  every day.
 - Calling it a trading signal. It is context, not advice.
 
-## 7. Daily summary recipe (for Muse)
+## 8. Daily summary recipe (for Muse)
 
-Use the text that `scripts/daily_heatmap.py` prints. Quote its numbers; do not
-read numbers off the image.
+Read `exports/heatmap.md`, which `scripts/daily_heatmap.py` writes. It has the
+facts and the heatmap as a table. Quote its numbers; do not read numbers off
+the images. The images (`exports/heatmap-spy.png`, `exports/heatmap-qqq.png`)
+are for the user: send them with the summary.
 
 For each symbol (SPY, then QQQ):
 
-1. **Regime:** look at "within 2% of spot". Positive means mostly green near
-   spot (calmer). Negative means mostly red (faster moves).
-2. **Levels:** name the biggest positive strike above spot (possible ceiling)
+1. **Regime:** say POSITIVE or NEGATIVE gamma, and where the gamma flip is
+   (with its SPX/NDX level and distance from spot). If the flip is within
+   about 0.5% of spot, say the regime is fragile.
+2. **VEX:** one short line: what hedging does if IV falls or rises.
+3. **Levels:** name the biggest positive strike above spot (possible ceiling)
    and the biggest negative strike below spot (possible fast-break support),
    with their SPX/NDX levels. Mention the call wall and put wall.
-3. **Dates:** say which expiration is the largest. If it is not the nearest
+4. **Dates:** say which expiration is the largest. If it is not the nearest
    one, say its effect grows as it gets closer. If a big date expires this
    week, say levels may change after it.
-4. **Caveat:** one short line saying this assumes the usual market-maker
+5. **Caveat:** one short line saying this assumes the usual market-maker
    positioning and is not advice.
 
-Template (keep it under about 120 words):
+Template (keep it under about 150 words):
 
 ```text
 GEX daily, <date> (data: <data line>)
 
-SPY $<spot> (~SPX <level>): <calm / fast-move> setup, net GEX near spot <value>.
+SPY $<spot> (~SPX <level>): <POSITIVE / NEGATIVE> gamma, flip $<flip> (~SPX <level>, <pct>)<, fragile if close>.
+VEX <value>: if IV falls, hedging <buys / sells>; if IV rises, the opposite.
 Ceiling to watch $<strike> (~SPX <level>); fast-break support $<strike> (~SPX <level>).
 Walls (nearest expiration): call $<strike>, put $<strike>.
 Biggest date: <expiration> (<n>d) <value> - <grows as it nears / expires this week>.

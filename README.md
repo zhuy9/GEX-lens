@@ -23,27 +23,30 @@ This is a personal research tool, not a trading system.
 Example prompt for the agent:
 
 > Every weekday at 9:00 ET, follow the "For AI agents" section of
-> https://github.com/zhuy9/GEX-lens. Send me the heatmap screenshot and a
-> daily summary written with docs/interpret-heatmap.md.
+> https://github.com/zhuy9/GEX-lens. Send me the SPY and QQQ heatmap images
+> and a daily summary written with docs/interpret-heatmap.md.
 
-Steps for the agent. You only need Python 3.12 (no Node.js, no servers):
+Steps for the agent. You only need Python 3.12 (no browser, no Node.js, no
+servers):
 
 ```bash
 git clone https://github.com/zhuy9/GEX-lens.git
 cd GEX-lens/backend
 python3.12 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt
+pip install -r ../scripts/requirements.txt
 python ../scripts/daily_heatmap.py
 ```
 
-1. The script prints the key numbers for each symbol (spot, net GEX, biggest
-   strikes, walls, biggest expirations) and the path of the page it made:
-   `exports/heatmap.html`.
-2. Open that page in a browser about 1100 px wide and take a full-page
-   screenshot. For one image per symbol, capture `#spy` and `#qqq`.
+1. The script writes **`exports/heatmap.md`: the text for you to read.** For
+   each symbol it has the key numbers (spot, positive or negative gamma, the
+   gamma flip, vanna exposure (VEX), biggest strikes, walls, biggest
+   expirations) and the heatmap itself as a table.
+2. It also saves **two images for the user**: `exports/heatmap-spy.png` and
+   `exports/heatmap-qqq.png`. You do not need to read them.
 3. Read [docs/interpret-heatmap.md](docs/interpret-heatmap.md) and write the
-   daily summary with its template (section 7), using the printed numbers.
-4. Send the screenshot and the summary to the user.
+   daily summary with its template (section 8), using the numbers in
+   `heatmap.md`.
+4. Send the summary and both images to the user.
 
 Rules:
 
@@ -55,8 +58,8 @@ Rules:
   stopped. Tell the user.
 - Do not commit anything. The script uses its own temporary settings and
   database.
-- Test run with fake data and no network: add `--fixture`. The page title then
-  says "SYNTHETIC FIXTURE DATA".
+- Test run with fake data and no network: add `--fixture`. The images and the
+  output then say "SYNTHETIC FIXTURE DATA".
 
 Before the 9:30 ET open, prices are from the last close; open interest is
 updated overnight. See [How to read the heatmap](#how-to-read-the-heatmap) and
@@ -67,10 +70,12 @@ updated overnight. See [How to read the heatmap](#how-to-read-the-heatmap) and
 Each cell is gamma exposure (GEX): open interest times gamma, in dollars of
 hedging per 1% move. It is not trading volume. Green is call gamma, red is
 put gamma, darker is bigger. Under the usual assumption, green areas slow
-price down and red areas let moves speed up. It does not predict direction.
+price down and red areas let moves speed up. The daily script also reports
+the gamma flip (the price where that changes) and vanna exposure (how hedging
+reacts to IV). None of it predicts direction.
 
-For the full guide (near vs. far dates, walls, what the research says, and the
-daily summary template), read
+For the full guide (near vs. far dates, walls, gamma flip, VEX, what the
+research says, and the daily summary template), read
 [docs/interpret-heatmap.md](docs/interpret-heatmap.md).
 
 ## Quick start
@@ -219,7 +224,7 @@ cd backend
 ruff check .
 ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py market_inputs.py rates.py instruments.py api.py reconcile.py
 pytest --ignore=tests/test_performance.py
-python ../scripts/daily_heatmap.py --fixture
+pip install -r ../scripts/requirements.txt && python ../scripts/daily_heatmap.py --fixture
 cd ../frontend
 npm run lint && npm run build && npm test
 ```
@@ -263,6 +268,7 @@ which points to a bug.
 - [ADR-0002: SPX/NDX conversion ratios](docs/ADR-0002-index-conversion-ratios.md)
 - [ADR-0003: automated SPY/QQQ dividend schedules](docs/ADR-0003-automated-dividend-schedules.md)
 - [ADR-0004: daily heatmap for AI agents](docs/ADR-0004-daily-heatmap-for-agents.md)
+- [ADR-0005: gamma flip and vanna exposure](docs/ADR-0005-gamma-flip-and-vanna.md)
 - [How to read the heatmap](docs/interpret-heatmap.md)
 - Data-source contracts: [Nasdaq option chain](docs/source-contract.md),
   [Nasdaq dividends](docs/dividend-source-contract.md),

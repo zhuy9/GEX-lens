@@ -57,7 +57,9 @@ jobs:
         run: pytest --ignore=tests/test_performance.py
       - name: Daily heatmap script (fixture data, no network)
         working-directory: backend
-        run: python ../scripts/daily_heatmap.py --fixture
+        run: |
+          pip install -r ../scripts/requirements.txt
+          python ../scripts/daily_heatmap.py --fixture
 
   frontend:
     runs-on: ubuntu-latest

@@ -7,15 +7,20 @@ from pydantic import ValidationError
 
 from analytics import (
     MAX_BRIDGE_GAP,
+    ExposureLeg,
     _piecewise_linear,
     analyze_snapshot,
     bsm_gamma,
     bsm_price,
+    bsm_vanna,
     build_gex,
     build_positioning_profiles,
     build_surface,
+    gamma_flip,
+    net_gex_at,
     price_quote,
     solve_iv,
+    vanna_exposure_by_strike,
 )
 from models import OptionQuote, PricedQuote, ny_local_date, year_fraction
 
@@ -480,3 +485,59 @@ def test_analyze_snapshot_is_deterministic():
     assert first[1] == second[1]
     assert first[2] == second[2]
     assert first[3] == second[3]
+
+
+# --- ADR-0005: gamma flip and vanna exposure -------------------------------
+
+
+def _leg(option_type, strike, oi, iv=0.2, t=0.05):
+    return ExposureLeg(option_type, strike, oi, iv, t, 0.04, 0.0, 0.0)
+
+
+def test_bsm_vanna_matches_finite_difference_of_price():
+    s, k, t, r, q, sigma, h, e = 100.0, 105.0, 0.25, 0.04, 0.0, 0.2, 0.01, 1e-4
+
+    def p(x, v):
+        return bsm_price("C", x, k, t, r, q, v)
+
+    numeric = ((p(s + h, sigma + e) - p(s + h, sigma - e)) - (p(s - h, sigma + e) - p(s - h, sigma - e))) / (
+        4 * h * e
+    )
+    assert math.isclose(bsm_vanna(s, k, t, r, q, sigma), numeric, rel_tol=1e-4)
+
+
+def test_net_gex_at_spot_uses_the_build_gex_formula():
+    legs = [_leg("C", 100.0, 1000), _leg("P", 95.0, 400)]
+    expected = sum(
+        (1 if leg.option_type == "C" else -1)
+        * bsm_gamma(100.0, leg.strike, leg.t, leg.r, leg.q, leg.iv)
+        * leg.open_interest
+        * 100
+        * 100.0**2
+        * 0.01
+        for leg in legs
+    )
+    assert math.isclose(net_gex_at(legs, 100.0), expected, rel_tol=1e-12)
+
+
+def test_gamma_flip_sits_between_put_and_call_concentrations():
+    legs = [_leg("P", 95.0, 5000), _leg("C", 105.0, 5000)]
+    flip = gamma_flip(legs, 100.0)
+    assert flip is not None and 95.0 < flip < 105.0
+    assert abs(net_gex_at(legs, flip)) < 0.01 * abs(net_gex_at(legs, 95.0))
+    assert net_gex_at(legs, flip - 1) < 0 < net_gex_at(legs, flip + 1)
+
+
+def test_gamma_flip_is_none_when_gex_never_changes_sign():
+    assert gamma_flip([_leg("C", 100.0, 1000)], 100.0) is None
+
+
+def test_vanna_exposure_signs_calls_positive_and_puts_negative():
+    # Same strike/IV: call and put vanna are equal, so equal OI nets to zero.
+    assert math.isclose(
+        sum(vanna_exposure_by_strike([_leg("C", 110.0, 10), _leg("P", 110.0, 10)], 100.0).values()),
+        0.0,
+        abs_tol=1e-9,
+    )
+    # OTM call (d2 < 0): positive vanna, so a long-call book has positive VEX.
+    assert vanna_exposure_by_strike([_leg("C", 110.0, 10)], 100.0)[110.0] > 0
