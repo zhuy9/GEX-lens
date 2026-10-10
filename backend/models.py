@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from pydantic import (
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     NonNegativeInt,
@@ -62,7 +63,17 @@ def _require_rate_cc_bounded(v: float) -> float:
 
 
 PositiveDecimal = Annotated[Decimal, Field(gt=0)]
-FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+
+
+def _reject_bool(v: object) -> object:
+    # JSON true/false would otherwise coerce to 1.0/0.0; whole numbers like 4 stay valid.
+    if isinstance(v, bool):
+        raise ValueError("must be a number, not true/false")
+    return v
+
+
+RateFloat = Annotated[float, BeforeValidator(_reject_bool)]
+FiniteFloat = Annotated[RateFloat, Field(allow_inf_nan=False)]
 PositiveFiniteFloat = Annotated[float, Field(gt=0, allow_inf_nan=False)]
 
 
@@ -163,7 +174,7 @@ class ResolvedRate(BaseModel):
     effective_date: date
     fetched_at: AwareDatetime
     raw_percent_rate: FiniteFloat | None
-    rate_cc: float
+    rate_cc: RateFloat
     quote_convention: Literal["percent_simple_act360", "continuous_act365f"]
     normalization: Literal["constant_daily_sofr_proxy", "manual_already_continuous"]
     revision_indicator: str | None
@@ -178,7 +189,7 @@ class ResolvedRate(BaseModel):
 class ManualRateInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    rate_cc: float
+    rate_cc: RateFloat
     effective_date: date
     entered_at: AwareDatetime
     source_ref: str

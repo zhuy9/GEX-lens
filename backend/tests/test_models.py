@@ -4,7 +4,16 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from models import ChainSnapshot, DividendRecord, ExpectedDividend, OptionQuote, ScheduleReview, Settings
+from models import (
+    ChainSnapshot,
+    DividendRecord,
+    ExpectedDividend,
+    ManualRateInput,
+    OptionQuote,
+    RateObservation,
+    ScheduleReview,
+    Settings,
+)
 
 VALID = dict(
     source_mode="fixture",
@@ -192,3 +201,20 @@ def test_dividend_record_rejects_payment_before_ex_date():
             kind="ordinary_cash",
             source_ref="test",
         )
+
+
+@pytest.mark.parametrize("bad", [True, False])
+def test_rate_fields_reject_bools_but_accept_whole_numbers(bad):
+    obs = {"effective_date": "2026-01-02", "rate_type": "SOFR", "revision_indicator": None}
+    with pytest.raises(ValidationError):
+        RateObservation.model_validate({**obs, "percent_rate": bad})
+    assert RateObservation.model_validate({**obs, "percent_rate": 4}).percent_rate == 4.0
+    manual = {
+        "effective_date": "2026-01-02",
+        "entered_at": "2026-01-02T21:00:00Z",
+        "source_ref": "t",
+        "reason": "t",
+    }
+    with pytest.raises(ValidationError):
+        ManualRateInput.model_validate({**manual, "rate_cc": bad})
+    assert ManualRateInput.model_validate({**manual, "rate_cc": 0}).rate_cc == 0.0
