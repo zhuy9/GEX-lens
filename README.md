@@ -275,12 +275,17 @@ Current build/test status is reported by GitHub Actions.
   (Apache-2.0): the daily SPX/SPY and NDX/QQQ ratios in
   [reference/conversion_ratios.json](reference/conversion_ratios.json),
   refreshed after each close by
-  [.github/workflows/ratio-update.yml](.github/workflows/ratio-update.yml).
+  [.github/workflows/reference-update.yml](.github/workflows/reference-update.yml).
   Display only (index equivalents on the heatmap's strike axis); never used
   as spot or in any calculation. yfinance is an unofficial library, not
   affiliated with or endorsed by Yahoo; review
   [Yahoo's terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html)
   yourself. Only the two derived ratios are committed, never raw quotes.
+  The same workflow runs `scripts/update_dividends.py`, which writes projected
+  SPY/QQQ dividend schedules (pattern ex-date, last actual amount, marked
+  `estimated`) to [reference/dividend_schedules.json](reference/dividend_schedules.json)
+  for `"manual_schedule"` (ADR-0003). A local `reference_inputs.json` entry
+  with a newer `reviewed_at` overrides it.
 - Fixtures, tests, and screenshots use synthetic data only. Never commit
   captured market-data responses, databases, credentials, or exports.
 

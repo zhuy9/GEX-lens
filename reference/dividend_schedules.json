@@ -1,0 +1,28 @@
+{
+	"input_schema_version": 1,
+	"manual_rate": null,
+	"schedules": {
+		"QQQ": {
+			"symbol": "QQQ",
+			"reviewed_at": "2026-10-10T01:23:03Z",
+			"coverage_start": "2026-10-09",
+			"coverage_end": "2026-11-23",
+			"no_other_events_expected": true,
+			"source_refs": [
+				"auto:update_dividends.py:yahoo-history:2026-10-09"
+			],
+			"expected_events": []
+		},
+		"SPY": {
+			"symbol": "SPY",
+			"reviewed_at": "2026-10-10T01:23:03Z",
+			"coverage_start": "2026-10-09",
+			"coverage_end": "2026-11-23",
+			"no_other_events_expected": true,
+			"source_refs": [
+				"auto:update_dividends.py:yahoo-history:2026-10-09"
+			],
+			"expected_events": []
+		}
+	}
+}

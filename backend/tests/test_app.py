@@ -3,7 +3,7 @@ import math
 import threading
 import time
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from conftest import StubProvider, make_settings, make_snapshot
@@ -745,3 +745,46 @@ def test_dividend_sources_must_cover_exactly_the_instruments(tmp_path, dividend_
     )
     with pytest.raises(ValueError, match="one entry per instrument"):
         create_app(settings, provider=StubProvider())
+
+
+@pytest.mark.parametrize(
+    ("local_age_days", "auto_age_days", "error_code"),
+    [
+        (None, 0, None),  # only the committed auto schedule exists
+        (0, 30, None),  # fresher local entry overrides a stale auto one
+        (30, 0, None),  # fresher auto entry overrides a stale local one
+        (30, 30, "DIVIDEND_REVIEW_REQUIRED"),  # newest is still stale -> review required
+    ],
+)
+def test_newest_of_local_and_auto_schedule_wins(
+    tmp_path, monkeypatch, local_age_days, auto_age_days, error_code
+):
+    # ADR-0003: reference/dividend_schedules.json joins reference_inputs.json.
+    def inputs(age_days):
+        schedules = {}
+        if age_days is not None:
+            schedules["SPY"] = {
+                "symbol": "SPY",
+                "reviewed_at": (datetime.now(UTC) - timedelta(days=age_days)).isoformat(),
+                "coverage_start": "2026-01-02",
+                "coverage_end": "2026-04-02",
+                "no_other_events_expected": True,
+                "source_refs": ["synthetic"],
+                "expected_events": [],
+            }
+        return json.dumps({"input_schema_version": 1, "manual_rate": None, "schedules": schedules})
+
+    local_path, auto_path = tmp_path / "local.json", tmp_path / "auto.json"
+    local_path.write_text(inputs(local_age_days))
+    auto_path.write_text(inputs(auto_age_days))
+    monkeypatch.setattr("app.AUTO_SCHEDULES_PATH", auto_path)
+    settings = make_settings(str(tmp_path / "t.duckdb")).model_copy(
+        update={
+            "dividend_sources": {"SPY": "manual_schedule", "QQQ": "fixture", "AAPL": "fixture"},
+            "reference_inputs_path": str(local_path),
+        }
+    )
+    with TestClient(create_app(settings, provider=StubProvider(make_snapshot("fixture")))) as client:
+        response = client.post("/api/dashboard/SPY/refresh")
+    body = response.json()
+    assert body.get("error", {}).get("code") == error_code, body

@@ -1,0 +1,39 @@
+name: Update reference data
+
+# Once a day after the close, refresh the committed reference/ files from
+# Yahoo (yfinance):
+#   - conversion_ratios.json: display-only SPX/SPY, NDX/QQQ ratios (ADR-0002)
+#   - dividend_schedules.json: projected SPY/QQQ dividend schedules (ADR-0003)
+# Each step leaves its file untouched on bad data and fails the run (GitHub
+# emails you); the other step still runs and its changes are still committed.
+
+on:
+  schedule:
+    - cron: "0 22 * * 1-5" # after the 16:00 ET close in both EDT and EST
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install yfinance==1.7.0
+      - name: Conversion ratios
+        run: python scripts/update_ratios.py
+      - name: Dividend schedules
+        if: ${{ !cancelled() }}
+        run: python scripts/update_dividends.py
+      - name: Commit if changed
+        if: ${{ !cancelled() }}
+        run: |
+          git diff --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: update reference data"
+          git push

@@ -1,6 +1,8 @@
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import pytest
+
 from models import ChainRequest, ChainSnapshot, OptionQuote, Settings
 
 
@@ -68,3 +70,9 @@ class StubProvider:
         if self._error is not None:
             raise self._error
         return self._snapshot
+
+
+@pytest.fixture(autouse=True)
+def _no_committed_auto_schedules(monkeypatch, tmp_path):
+    # ADR-0003: keep tests independent of the bot-updated reference/ file.
+    monkeypatch.setattr("app.AUTO_SCHEDULES_PATH", tmp_path / "no-auto-schedules.json")

@@ -61,6 +61,8 @@ from provider import DividendDataProvider, OptionsDataProvider, ProviderError, R
 
 MIN_CALENDAR_DTE = 1
 MAX_CALENDAR_DTE = 30
+# ADR-0003: written daily by .github/workflows/reference-update.yml.
+AUTO_SCHEDULES_PATH = Path(__file__).resolve().parent.parent / "reference/dividend_schedules.json"
 MIN_STRIKE_PCT = 0.80
 MAX_STRIKE_PCT = 1.20
 PRICING_TIME_CONVENTION = "16:00 America/New_York on expiration date"
@@ -313,12 +315,18 @@ def _collect_and_save(
 
         review = fixture_schedule_review(symbol, valuation_at, reviewed_at=attempt_started_at)
     else:
-        if local_inputs is None or symbol not in local_inputs.schedules:
+        # ADR-0003: the committed daily SPY/QQQ schedules join the local file;
+        # the newer reviewed_at wins, so a hand-edited local entry overrides.
+        sources = [local_inputs]
+        if AUTO_SCHEDULES_PATH.exists():
+            sources.append(load_local_reference_inputs(AUTO_SCHEDULES_PATH))
+        reviews = [s.schedules[symbol] for s in sources if s is not None and symbol in s.schedules]
+        if not reviews:
             raise ProviderError(
                 "DIVIDEND_REVIEW_REQUIRED",
                 f"No reviewed schedule for {symbol!r} in {settings.reference_inputs_path}",
             )
-        review = local_inputs.schedules[symbol]
+        review = max(reviews, key=lambda r: r.reviewed_at)
 
     # C05: freshness is this live refresh's own operational policy, not the
     # resolver's -- the offline counterfactual diagnostic (reconcile.py)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yfinance as yf
 
-OUT = Path(__file__).resolve().parents[2] / "reference/conversion_ratios.json"
+OUT = Path(__file__).resolve().parents[1] / "reference/conversion_ratios.json"
 # etf -> (index label, Yahoo index ticker, sane ratio range). The ranges only
 # catch garbage data; the real ratios drift ~0.1-0.2%/yr.
 PAIRS = {"SPY": ("SPX", "^GSPC", (9, 11)), "QQQ": ("NDX", "^NDX", (38, 44))}
