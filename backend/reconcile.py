@@ -430,7 +430,7 @@ def _check_baseline_reproduction(
             if (cell is None) != (saved_cell is None):
                 mismatches.append(f"cell {key}: completeness differs from saved")
                 continue
-            if cell is None:
+            if cell is None or saved_cell is None:
                 continue
             if cell.status != saved_cell["status"]:
                 mismatches.append(f"cell {key}: status {cell.status} != saved {saved_cell['status']}")

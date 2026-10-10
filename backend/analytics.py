@@ -440,7 +440,7 @@ def build_positioning_profiles(
             usable = [pq for pq in rows if pq.quote.open_interest is not None]
             if not usable:
                 return None, None
-            chosen = min(usable, key=lambda pq: (-pq.quote.open_interest, pq.quote.strike))
+            chosen = min(usable, key=lambda pq: (-(pq.quote.open_interest or 0), pq.quote.strike))
             return chosen.quote.strike, chosen.quote.open_interest
 
         def gex_peak(rows: list[PricedQuote]) -> tuple[Decimal | None, float | None]:
@@ -462,9 +462,9 @@ def build_positioning_profiles(
         if strikes and all(pq.quote.open_interest is not None for pq in quotes):
             payouts = {
                 strike: sum(
-                    max(float(strike - pq.quote.strike), 0.0) * pq.quote.open_interest * 100
+                    max(float(strike - pq.quote.strike), 0.0) * (pq.quote.open_interest or 0) * 100
                     if pq.quote.option_type == "C"
-                    else max(float(pq.quote.strike - strike), 0.0) * pq.quote.open_interest * 100
+                    else max(float(pq.quote.strike - strike), 0.0) * (pq.quote.open_interest or 0) * 100
                     for pq in quotes
                 )
                 for strike in strikes

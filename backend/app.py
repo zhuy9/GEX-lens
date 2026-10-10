@@ -6,7 +6,7 @@ import logging
 import math
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -220,19 +220,16 @@ def _calculation_input_hash(
         ),
         key=lambda row: (row["symbol"], row["expiration"], row["strike"], row["option_type"]),
     )
-    dividend_rows = sorted(
-        (
-            {
-                "event_id": e.event_id,
-                "ex_date": e.ex_date.isoformat(),
-                "payment_date": _date_or_none(e.payment_date),
-                "amount": str(e.amount),
-                "amount_status": e.amount_status,
-            }
-            for e in dividend_schedule.events
-        ),
-        key=lambda row: row["event_id"],
-    )
+    dividend_rows = [
+        {
+            "event_id": e.event_id,
+            "ex_date": e.ex_date.isoformat(),
+            "payment_date": _date_or_none(e.payment_date),
+            "amount": str(e.amount),
+            "amount_status": e.amount_status,
+        }
+        for e in sorted(dividend_schedule.events, key=lambda e: e.event_id)
+    ]
     payload = {
         "actual_spot": actual_spot,
         "contracts": contract_rows,
@@ -473,7 +470,7 @@ def create_app(
     gate = RefreshCoordinator(settings.refresh_min_interval_seconds)
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         yield
         # Only close a provider this factory built itself (e.g. NasdaqProvider's
         # own httpx.Client). An injected provider's client (tests, or a future
