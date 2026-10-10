@@ -7,7 +7,8 @@ research supports, and how to write a short daily summary.
 ## 1. What you are looking at
 
 - **Rows** are strike prices. SPY and QQQ rows also show the SPX or NDX level.
-- **Columns** are expiration dates, nearest on the left (up to 30 days out).
+- **Columns** are expiration dates, nearest on the left (up to 60 days out; the daily images show
+  the nearest 8).
 - **The dashed row** is the current price (spot).
 - **Each cell** is the gamma exposure (GEX) of all options at that strike and
   expiration, in US dollars per 1% move.
@@ -100,7 +101,7 @@ point, with the same call-positive/put-negative sign.
   expirations, when IV moves the most.
 
 Limits: IV is held fixed per contract while price moves, so in a real
-sell-off (where IV rises) the true flip can be different. Only 1-30 day
+sell-off (where IV rises) the true flip can be different. Only 1-60 day
 expirations are counted, so numbers will differ from vendor sites.
 
 ## 6. What the research says

@@ -112,7 +112,7 @@ def as_of(d: dict) -> str:
 
 def facts(d: dict, conversion: dict | None) -> dict:
     """Every number the summary and the image use. Covers all strikes and
-    expirations in the snapshot (1-30 days), not only the drawn window."""
+    expirations in the snapshot (1-60 days), not only the drawn window."""
     gex, spot = d["gex"], d["spot"]
     by_strike: dict[str, float] = {}
     by_expiration: dict[str, float] = {}
