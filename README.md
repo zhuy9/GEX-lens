@@ -273,7 +273,7 @@ Current build/test status is reported by GitHub Actions.
 - **New York Fed SOFR** (`"nyfed_sofr"`): the public rates API.
 - **Yahoo Finance via [yfinance](https://github.com/ranaroussi/yfinance)**
   (Apache-2.0): the daily SPX/SPY and NDX/QQQ ratios in
-  [frontend/src/conversion_ratios.json](frontend/src/conversion_ratios.json),
+  [reference/conversion_ratios.json](reference/conversion_ratios.json),
   refreshed after each close by
   [.github/workflows/ratio-update.yml](.github/workflows/ratio-update.yml).
   Display only (index equivalents on the heatmap's strike axis); never used

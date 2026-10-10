@@ -12,7 +12,7 @@ QQQ strike, on the GEX heatmap's strike axis and spot row.
 - `.github/scripts/update_ratios.py` downloads 1-minute closes for SPY,
   `^GSPC`, QQQ, `^NDX` from Yahoo via yfinance, takes the last minute where all
   four have a close, and writes `index / etf` to
-  `frontend/src/conversion_ratios.json`. Out-of-range or non-finite ratios
+  `reference/conversion_ratios.json`. Out-of-range or non-finite ratios
   fail the run without touching the file.
 - The Action commits only when the file changes. The last committed value is
   the fallback; the UI shows its as-of time in the strike header tooltip.

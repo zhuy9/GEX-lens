@@ -21,7 +21,7 @@ import { useDashboard } from "@/hooks/useDashboard";
 import { useTick } from "@/hooks/useTick";
 import { secondsUntil } from "@/lib/time";
 import type { DashboardResponse, GexMode, MoveUnit } from "@/types";
-import conversionRatios from "./conversion_ratios.json";
+import conversionRatios from "../../reference/conversion_ratios.json";
 
 // Only this panel needs Plotly; the GEX heatmap is a plain HTML table. The
 // production build is a single ~5MB (~1.5MB gzipped) bundle dominated by

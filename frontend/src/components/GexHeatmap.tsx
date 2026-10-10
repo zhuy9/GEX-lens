@@ -11,7 +11,7 @@ interface GexHeatmapProps {
 	conversion?: IndexConversion;
 }
 
-/** Display-only ETF -> index ratio from conversion_ratios.json (ADR-0002). */
+/** Display-only ETF -> index ratio from reference/conversion_ratios.json (ADR-0002). */
 export interface IndexConversion {
 	index: string;
 	ratio: number;

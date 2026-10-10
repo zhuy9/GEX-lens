@@ -27,7 +27,7 @@ Where ADR-0001 and the PRD disagree, ADR-0001 wins.
 
 [ADR-0002](docs/ADR-0002-index-conversion-ratios.md) adds a daily GitHub
 Action that writes display-only SPX/SPY and NDX/QQQ ratios (Yahoo via
-yfinance) to `frontend/src/conversion_ratios.json`. yfinance never enters the
+yfinance) to `reference/conversion_ratios.json`. yfinance never enters the
 backend; the ratios never feed spot or analytics.
 
 ## Plan and milestone rules

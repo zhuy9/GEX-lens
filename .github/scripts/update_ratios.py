@@ -1,4 +1,4 @@
-"""Refresh frontend/src/conversion_ratios.json (ADR-0002).
+"""Refresh reference/conversion_ratios.json (ADR-0002).
 
 Display-only SPX/SPY and NDX/QQQ ratios from the last 1-minute bar where all
 four Yahoo tickers have a close. On any bad value it exits non-zero and leaves
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import yfinance as yf
 
-OUT = Path(__file__).resolve().parents[2] / "frontend/src/conversion_ratios.json"
+OUT = Path(__file__).resolve().parents[2] / "reference/conversion_ratios.json"
 # etf -> (index label, Yahoo index ticker, sane ratio range). The ranges only
 # catch garbage data; the real ratios drift ~0.1-0.2%/yr.
 PAIRS = {"SPY": ("SPX", "^GSPC", (9, 11)), "QQQ": ("NDX", "^NDX", (38, 44))}
@@ -40,7 +40,7 @@ def main() -> None:
         "source": "yahoo_1m_close",
         "ratios": ratios,
     }
-    OUT.write_text(json.dumps(out, indent="\t") + "\n")  # tabs: match biome, no churn
+    OUT.write_text(json.dumps(out, indent="\t") + "\n")  # stable bytes: unchanged ratios = no diff, no commit
     print(json.dumps(out))
 
 
