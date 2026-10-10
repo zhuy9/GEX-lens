@@ -3,6 +3,7 @@
 import ast
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import StubProvider, make_settings, make_snapshot
@@ -49,7 +50,7 @@ def test_identical_inputs_under_different_provider_ids_yield_identical_analytics
     assert snap_a.contracts == snap_b.contracts
     assert snap_a.provider_id != snap_b.provider_id
 
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         spot=snap_a.underlying_price,
         r=0.04,
         q=0.0,

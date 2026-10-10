@@ -224,7 +224,8 @@ The same checks CI runs:
 ```bash
 cd backend
 ruff check .
-ty check app.py provider.py nasdaq.py fixtures.py analytics.py storage.py models.py market_inputs.py rates.py instruments.py api.py reconcile.py
+ruff format --check .
+ty check
 pytest --ignore=tests/test_performance.py
 pip install -r ../scripts/requirements.txt && python ../scripts/daily_heatmap.py --fixture
 cd ../frontend

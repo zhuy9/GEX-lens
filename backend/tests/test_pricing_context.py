@@ -48,7 +48,7 @@ def make_quote(**overrides) -> OptionQuote:
         flags=(),
     )
     defaults.update(overrides)
-    return OptionQuote(**defaults)
+    return OptionQuote.model_validate(defaults)
 
 
 def make_dividend(event_id="e1", ex_date="2026-01-06", amount="1.25", payment_date=None) -> ResolvedDividend:
@@ -386,6 +386,7 @@ def test_n6_surface_recovers_constant_iv_across_maturities_before_and_after_an_e
         source_row_count=1,
     )
     assert surface.status == "READY"
+    assert surface.iv is not None
     populated = [iv for row in surface.iv for iv in row if iv is not None]
     assert len(populated) > 20
     for iv in populated:

@@ -4,6 +4,7 @@ plus Section 8's reference caching (M2.2-M2.8)."""
 import json
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
@@ -131,7 +132,7 @@ class StubRateProvider:
 
 
 def _resolve_dividends(db_path, **overrides):
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         symbol="AAPL",
         dividend_source="manual_schedule",
         review=_review(),
@@ -834,6 +835,7 @@ def test_load_local_reference_inputs_parses_manual_rate_and_schedules(tmp_path):
         )
     )
     parsed = market_inputs.load_local_reference_inputs(path)
+    assert parsed.manual_rate is not None
     assert parsed.manual_rate.rate_cc == 0.04
     assert parsed.schedules["SPY"].expected_events[0].amount == Decimal("1.25")
 

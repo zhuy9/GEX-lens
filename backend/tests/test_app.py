@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 import storage
 from app import create_app
 from models import DividendFeedSnapshot, RateBatch, RateObservation
-from provider import ProviderError
+from provider import DividendDataProvider, ProviderError
 
 
 def test_health_check(tmp_path):
@@ -209,7 +209,7 @@ def test_one_symbols_dividend_adapter_error_does_not_affect_another_symbol(tmp_p
     settings = make_settings(str(tmp_path / "t.duckdb")).model_copy(
         update={"refresh_min_interval_seconds": 0}
     )
-    dividend_providers = {
+    dividend_providers: dict[str, DividendDataProvider | None] = {
         "SPY": FixtureDividendProvider(),
         "QQQ": FixtureDividendProvider(),
         "AAPL": FailingDividendProvider(),
@@ -318,6 +318,7 @@ def test_repeated_fixture_collections_are_ordered_by_recency_not_uuid(tmp_path):
     assert first["snapshot_id"] != second["snapshot_id"]
 
     latest = storage.get_latest_dashboard(settings.db_path, settings.source_mode, "SPY")
+    assert latest is not None
     assert latest["snapshot_id"] == second["snapshot_id"]
 
 

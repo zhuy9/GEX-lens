@@ -6,7 +6,7 @@ continuation page with no header row, the lastTrade string format) but use
 made-up numbers -- the real captured sample is private and git-ignored.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import httpx
@@ -90,9 +90,11 @@ def make_provider(handler) -> nasdaq.NasdaqProvider:
 
 @pytest.mark.parametrize("total", ["NaN", "Infinity", "0.9", "-1", True])
 def test_invalid_total_record_is_a_schema_error(total):
-    provider = make_provider(lambda _: httpx.Response(
-        200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", [], total_record=total)
-    ))
+    provider = make_provider(
+        lambda _: httpx.Response(
+            200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", [], total_record=total)
+        )
+    )
     with pytest.raises(ProviderError) as error:
         provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
     assert error.value.code == "SCHEMA_ERROR"
@@ -183,7 +185,7 @@ def test_aware_chain_asof_is_accepted_and_normalized_to_utc():
     snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
     assert snapshot.chain_asof is not None
     assert snapshot.chain_asof.tzinfo is not None
-    assert snapshot.chain_asof.utcoffset().total_seconds() == 0
+    assert snapshot.chain_asof.utcoffset() == timedelta(0)
     assert snapshot.chain_asof.hour == 21  # 16:00-05:00 -> 21:00 UTC
 
 

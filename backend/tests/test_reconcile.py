@@ -258,12 +258,18 @@ SCENARIO_EVENT = {
 }
 
 
+def _scalar(conn, sql: str, params=None):
+    row = conn.execute(sql, params).fetchone()
+    assert row is not None
+    return row[0]
+
+
 def _row_counts(db_path: str) -> dict:
     conn = duckdb.connect(db_path, read_only=True)
     try:
         return {
-            "snapshots": conn.execute("SELECT count(*) FROM snapshots").fetchone()[0],
-            "option_quotes": conn.execute("SELECT count(*) FROM option_quotes").fetchone()[0],
+            "snapshots": _scalar(conn, "SELECT count(*) FROM snapshots"),
+            "option_quotes": _scalar(conn, "SELECT count(*) FROM option_quotes"),
         }
     finally:
         conn.close()
@@ -489,9 +495,7 @@ def test_baseline_reproduction_failure_is_reported_and_exits_nonzero(tmp_path):
     conn = duckdb.connect(db_path)
     try:
         dashboard = json.loads(
-            conn.execute(
-                "SELECT dashboard_json FROM snapshots WHERE snapshot_id = ?", [snapshot_id]
-            ).fetchone()[0]
+            _scalar(conn, "SELECT dashboard_json FROM snapshots WHERE snapshot_id = ?", [snapshot_id])
         )
         dashboard["market_inputs"]["rate"]["rate_cc"] = (
             0.30  # wildly different from what priced the saved rows

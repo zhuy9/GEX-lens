@@ -1,6 +1,7 @@
 import math
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -44,7 +45,7 @@ def make_quote(**overrides) -> OptionQuote:
         flags=(),
     )
     defaults.update(overrides)
-    return OptionQuote(**defaults)
+    return OptionQuote.model_validate(defaults)
 
 
 def test_bsm_price_and_gamma_match_reference_values():
@@ -248,6 +249,10 @@ def test_n5_gex_scaling_matches_the_pinned_reference_table():
     assert cell.signed_proxy == pytest.approx(320_000.0, abs=1e-6)
     assert cell.gross_exposure == pytest.approx(1_280_000.0, abs=1e-6)
 
+    assert cell.call_exposure is not None
+    assert cell.put_exposure is not None
+    assert cell.signed_proxy is not None
+    assert cell.gross_exposure is not None
     factor = 1 / (0.01 * 200.0)  # Section 10's per-$1 display conversion
     assert cell.call_exposure * factor == pytest.approx(400_000.0, abs=1e-6)
     assert cell.put_exposure * factor == pytest.approx(240_000.0, abs=1e-6)
@@ -468,7 +473,7 @@ def test_piecewise_linear_bridges_a_gap_within_the_maximum():
 def test_analyze_snapshot_is_deterministic():
     # M2.7
     quotes = (make_quote(option_type="C"), make_quote(option_type="P"))
-    kwargs = dict(
+    kwargs: dict[str, Any] = dict(
         spot=100.0,
         r=0.04,
         q=0.0,

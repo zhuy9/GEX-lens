@@ -69,6 +69,7 @@ class StubProvider:
         self.calls += 1
         if self._error is not None:
             raise self._error
+        assert self._snapshot is not None
         return self._snapshot
 
 

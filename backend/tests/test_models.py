@@ -18,7 +18,7 @@ VALID = dict(
 
 
 def test_valid_settings_parses():
-    settings = Settings(**VALID)
+    settings = Settings.model_validate(VALID)
     assert settings.source_mode == "fixture"
 
 
@@ -36,7 +36,7 @@ def test_valid_settings_parses():
 def test_invalid_settings_rejected(override):
     # M1.8
     with pytest.raises(ValidationError):
-        Settings(**{**VALID, **override})
+        Settings.model_validate({**VALID, **override})
 
 
 # R06: canonical datetime fields must be timezone-aware -- enforced once at
@@ -98,9 +98,7 @@ def _snapshot_kwargs(**overrides) -> dict:
     return defaults
 
 
-@pytest.mark.parametrize(
-    "field", ["collection_started_at", "collected_at", "chain_asof", "spot_asof"]
-)
+@pytest.mark.parametrize("field", ["collection_started_at", "collected_at", "chain_asof", "spot_asof"])
 def test_naive_snapshot_datetime_is_rejected(field):
     with pytest.raises(ValidationError):
         ChainSnapshot(**_snapshot_kwargs(**{field: datetime(2026, 1, 15, 16, 0)}))
