@@ -20,7 +20,11 @@ PAIRS = {"SPY": ("SPX", "^GSPC", (9, 11)), "QQQ": ("NDX", "^NDX", (38, 44))}
 
 def main() -> None:
     tickers = [t for etf, (_, index_ticker, _) in PAIRS.items() for t in (etf, index_ticker)]
-    closes = yf.download(tickers, period="1d", interval="1m", progress=False, auto_adjust=False)
+    # threads=False: parallel downloads race on yfinance's sqlite tz cache
+    # ("database is locked") on fresh runners.
+    closes = yf.download(
+        tickers, period="1d", interval="1m", progress=False, auto_adjust=False, threads=False
+    )
     closes = closes["Close"].dropna()
     if closes.empty:
         sys.exit("no minute bar with all four closes; keeping previous ratios")
@@ -36,7 +40,7 @@ def main() -> None:
         "source": "yahoo_1m_close",
         "ratios": ratios,
     }
-    OUT.write_text(json.dumps(out, indent=2) + "\n")
+    OUT.write_text(json.dumps(out, indent="\t") + "\n")  # tabs: match biome, no churn
     print(json.dumps(out))
 
 
