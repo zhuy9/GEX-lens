@@ -36,7 +36,7 @@ const profiles = [
 
 describe("PositioningProfile", () => {
 	it("renders nothing when an older snapshot has no positioning data", () => {
-		const { container } = render(<PositioningProfile />);
+		const { container } = render(<PositioningProfile profiles={[]} />);
 		expect(container).toBeEmptyDOMElement();
 	});
 

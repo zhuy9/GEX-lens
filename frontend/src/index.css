@@ -1,7 +1,28 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "./vendor/shadcn-tailwind.css";
 @import "@fontsource-variable/geist";
+
+/* From shadcn@4.21.4 dist/tailwind.css (MIT, https://github.com/shadcn-ui/ui):
+ * the only three variants our ui components use. Copy more from there if a
+ * newly added shadcn component needs them. */
+@custom-variant data-open {
+	&:where([data-state="open"]),
+	&:where([data-open]:not([data-open="false"])) {
+		@slot;
+	}
+}
+@custom-variant data-closed {
+	&:where([data-state="closed"]),
+	&:where([data-closed]:not([data-closed="false"])) {
+		@slot;
+	}
+}
+@custom-variant data-disabled {
+	&:where([data-disabled="true"]),
+	&:where([data-disabled]:not([data-disabled="false"])) {
+		@slot;
+	}
+}
 
 @custom-variant dark (&:is(.dark *));
 
