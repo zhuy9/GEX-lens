@@ -4,7 +4,7 @@
 	"schedules": {
 		"QQQ": {
 			"symbol": "QQQ",
-			"reviewed_at": "2026-10-10T01:23:03Z",
+			"reviewed_at": "2026-10-10T01:27:46Z",
 			"coverage_start": "2026-10-09",
 			"coverage_end": "2026-11-23",
 			"no_other_events_expected": true,
@@ -15,7 +15,7 @@
 		},
 		"SPY": {
 			"symbol": "SPY",
-			"reviewed_at": "2026-10-10T01:23:03Z",
+			"reviewed_at": "2026-10-10T01:27:46Z",
 			"coverage_start": "2026-10-09",
 			"coverage_end": "2026-11-23",
 			"no_other_events_expected": true,
