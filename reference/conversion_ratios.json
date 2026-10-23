@@ -1,14 +1,14 @@
 {
-	"asof": "2026-10-21T19:59:00Z",
+	"asof": "2026-10-22T19:59:00Z",
 	"source": "yahoo_1m_close",
 	"ratios": {
 		"SPY": {
 			"index": "SPX",
-			"ratio": 10.03353
+			"ratio": 10.03096
 		},
 		"QQQ": {
 			"index": "NDX",
-			"ratio": 41.11392
+			"ratio": 41.10597
 		}
 	}
 }
