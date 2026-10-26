@@ -83,7 +83,7 @@ research says, and the daily summary template), read
 
 ## Quick start
 
-You need Python 3.12 and Node.js 22.12+. Fixture mode uses fake data and no
+You need Python 3.12 and Node.js 24.22.1+. Fixture mode uses fake data and no
 network.
 
 Backend (run it from `backend/`; paths in `settings.json` are relative to it):

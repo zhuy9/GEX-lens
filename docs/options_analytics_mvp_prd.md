@@ -97,7 +97,7 @@ Keep standard USD equity/ETF options as the only instrument class. Do not implem
 | Storage | DuckDB Python package and parameterized SQL |
 | Validation | Pydantic request/response models |
 | Tests | pytest, Vitest, React Testing Library; mocked upstream HTTP |
-| Runtimes | Python 3.12; Node 22.x at least 22.12 [S11] |
+| Runtimes | Python 3.12; Node 24.x at least 24.22.1 [S11] |
 
 Plotly supports the required heatmap and 3D-surface trace types. Use its complete distribution containing both trace types, not a reduced build without surfaces. [S6][S7]
 
