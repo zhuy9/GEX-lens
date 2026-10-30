@@ -4,12 +4,12 @@
 	"schedules": {
 		"AAPL": {
 			"symbol": "AAPL",
-			"reviewed_at": "2026-10-29T01:20:32Z",
-			"coverage_start": "2026-10-28",
-			"coverage_end": "2026-12-12",
+			"reviewed_at": "2026-10-30T01:24:35Z",
+			"coverage_start": "2026-10-29",
+			"coverage_end": "2026-12-13",
 			"no_other_events_expected": true,
 			"source_refs": [
-				"auto:update_dividends.py:yahoo-history:2026-10-28"
+				"auto:update_dividends.py:yahoo-history:2026-10-29"
 			],
 			"expected_events": [
 				{
@@ -24,23 +24,23 @@
 		},
 		"QQQ": {
 			"symbol": "QQQ",
-			"reviewed_at": "2026-10-29T01:20:32Z",
-			"coverage_start": "2026-10-28",
-			"coverage_end": "2026-12-12",
+			"reviewed_at": "2026-10-30T01:24:35Z",
+			"coverage_start": "2026-10-29",
+			"coverage_end": "2026-12-13",
 			"no_other_events_expected": true,
 			"source_refs": [
-				"auto:update_dividends.py:yahoo-history:2026-10-28"
+				"auto:update_dividends.py:yahoo-history:2026-10-29"
 			],
 			"expected_events": []
 		},
 		"SPY": {
 			"symbol": "SPY",
-			"reviewed_at": "2026-10-29T01:20:32Z",
-			"coverage_start": "2026-10-28",
-			"coverage_end": "2026-12-12",
+			"reviewed_at": "2026-10-30T01:24:35Z",
+			"coverage_start": "2026-10-29",
+			"coverage_end": "2026-12-13",
 			"no_other_events_expected": true,
 			"source_refs": [
-				"auto:update_dividends.py:yahoo-history:2026-10-28"
+				"auto:update_dividends.py:yahoo-history:2026-10-29"
 			],
 			"expected_events": []
 		}
