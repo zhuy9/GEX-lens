@@ -829,3 +829,17 @@ def test_dividend_malformed_json_is_schema_error():
     with pytest.raises(ProviderError) as exc_info:
         provider.fetch_dividends("AAPL")
     assert exc_info.value.code == "DIVIDEND_SCHEMA_ERROR"
+
+
+def test_non_standard_root_row_is_skipped_not_a_duplicate_conflict():
+    # Nasdaq lists adjusted roots ("b1spy-...") under the same expiration and
+    # strike as the real contract; they must not collide with or replace it.
+    adjusted = _data_row("aapl", "260115", "95.00", "00095000", c_last="0.10")
+    adjusted["drillDownURL"] = adjusted["drillDownURL"].replace("aapl--260115", "b1aapl260115")
+    rows = [_header_row("January 15, 2026"), adjusted, _data_row("aapl", "260115", "95.00", "00095000")]
+    provider = make_provider(
+        lambda _: httpx.Response(200, json=_body("LAST TRADE: $100.00 (AS OF JAN 15, 2026)", rows))
+    )
+    snapshot = provider.fetch_chain(ChainRequest(symbol="AAPL", min_calendar_dte=1, max_calendar_dte=60))
+    assert len(snapshot.contracts) == 2
+    assert all(c.last != 0.10 for c in snapshot.contracts)

@@ -164,6 +164,14 @@ def _drilldown_expiration_and_strike(url: str) -> tuple[date, Decimal] | None:
     return expiration, strike
 
 
+def _is_standard_root(url: str, symbol: str) -> bool:
+    """OCC ids pad the root to 6 chars ("spy---261106c00740000"). Nasdaq also
+    lists non-standard roots like "b1spy-" (adjusted deliverables) under the
+    same expiration/strike; those are not this symbol's contracts."""
+    contract = url.rsplit("/", 1)[-1]
+    return len(contract) == 21 and contract[:6].rstrip("-") == symbol.lower()
+
+
 @dataclass(frozen=True)
 class _PageResult:
     """One page's validated envelope. Distinguishes a genuinely empty page
@@ -314,10 +322,12 @@ class NasdaqProvider:
                         ) from exc
                     continue
 
+                url = row.get("drillDownURL")
+                if url and not _is_standard_root(url, symbol):
+                    continue  # e.g. "b1spy-..." adjusted contract: non-100 deliverable
                 saw_data_row = True
                 source_row_count += 1
                 expiration, strike = _row_identity(row, current_expiration)
-                url = row.get("drillDownURL")
                 for option_type, prefix, provider_id in (("C", "c", url), ("P", "p", None)):
                     volume, volume_invalid = _parse_count(row.get(f"{prefix}_Volume"))
                     open_interest, oi_invalid = _parse_count(row.get(f"{prefix}_Openinterest"))
