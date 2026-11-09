@@ -185,6 +185,19 @@ def summary(symbol: str, d: dict, f: dict) -> list[str]:
     ]
 
 
+def levels(d: dict, f: dict) -> list[tuple[float, str, str]]:
+    """Marked price levels, highest first: (price, color, label). Walls are
+    the nearest expiration's, same as the summary."""
+    p0 = d["positioning"][0] if d["positioning"] else {}
+    marks = [(d["spot"], "#4338ca", f"spot ${d['spot']:.2f}")]
+    if f["flip"]:
+        marks.append((f["flip"], "#d97706", f"gamma flip {strike_label(f['flip'])}"))
+    for name, key, color in (("call wall", "call_wall_strike", "#15803d"), ("put wall", "put_wall_strike", "#b91c1c")):
+        if p0.get(key):
+            marks.append((float(p0[key]), color, f"{name} {strike_label(p0[key])}"))
+    return sorted(marks, reverse=True)
+
+
 def row_position(strikes: list[float], level: float) -> float | None:
     """Fractional row index of a price level in a highest-first strike list."""
     for i in range(len(strikes) - 1):
@@ -225,10 +238,7 @@ def text_grid(d: dict, f: dict, conversion: dict | None) -> list[str]:
         f"| {head} | " + " | ".join(f"{e} ({dte.get(e, '?')}d)" for e in expirations) + " |",
         "|---|" + "---:|" * len(expirations),
     ]
-    marks = [(d["spot"], f"spot ${d['spot']:.2f}")]
-    if f["flip"]:
-        marks.append((f["flip"], f"gamma flip {strike_label(f['flip'])}"))
-    marks.sort(reverse=True)  # highest first, like the rows
+    marks = [(price, text) for price, _, text in levels(d, f)]  # highest first, like the rows
     blank = " |" * len(expirations)
     for strike, values in zip(strikes, grid, strict=True):
         while marks and marks[0][0] > float(strike):
@@ -270,22 +280,23 @@ def render(symbol: str, d: dict, f: dict, conversion: dict | None, fixture: bool
         spine.set_visible(False)
 
     shown = [float(s) for s in strike_rows]
-    marks = [(spot, "#4338ca", f"spot ${spot:.2f}")]
-    if f["flip"]:
-        marks.append((f["flip"], "#d97706", f"gamma flip {strike_label(f['flip'])}"))
-    for level, color, text in marks:
+    labels = []  # (y, color, text)
+    for level, color, text in levels(d, f):
         y = row_position(shown, level)
+        if y is None and level in shown:  # a wall exactly on the top/bottom row
+            y = float(shown.index(level))
         if y is not None:
             ax.axhline(y, color=color, linestyle="--", linewidth=1.4, zorder=1)  # behind cell labels
-            ax.text(
-                len(expirations) - 0.45,
-                y,
-                f" {text}",
-                color=color,
-                va="center",
-                fontsize=9,
-                fontweight="bold",
-            )
+        else:  # outside the window: label at the edge it lies beyond
+            above = level > shown[0]
+            y = -0.5 if above else len(shown) - 0.5
+            text = f"{'↑' if above else '↓'} {text} ({(level / spot - 1) * 100:+.1f}%)"
+        labels.append([y, -level, color, text])
+    labels.sort()  # by row, then highest price first among stacked edge labels
+    for prev, cur in zip(labels, labels[1:]):  # ponytail: push overlapping labels apart, no full layout solver
+        cur[0] = max(cur[0], prev[0] + 0.7)
+    for y, _, color, text in labels:
+        ax.text(len(expirations) - 0.45, y, f" {text}", color=color, va="center", fontsize=9, fontweight="bold")
 
     title = f"{symbol} GEX heatmap" + ("  (SYNTHETIC FIXTURE DATA)" if fixture else "")
     fig.suptitle(title, x=0.02, ha="left", fontsize=15, fontweight="bold")
@@ -301,7 +312,7 @@ def render(symbol: str, d: dict, f: dict, conversion: dict | None, fixture: bool
         fontsize=8,
         color="#71717a",
     )
-    fig.subplots_adjust(left=0.13, right=0.82, top=0.79, bottom=0.05)
+    fig.subplots_adjust(left=0.13, right=0.76, top=0.79, bottom=0.05)
     fig.savefig(path, facecolor="white")
     plt.close(fig)
 

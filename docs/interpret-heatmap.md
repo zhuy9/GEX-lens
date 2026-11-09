@@ -8,7 +8,11 @@ research supports, and how to write a short daily summary.
 
 - **Rows** are strike prices. SPY and QQQ rows also show the SPX or NDX level.
 - **Columns** are expiration dates, nearest on the left (up to 30 days out).
-- **The dashed row** is the current price (spot).
+- **Dashed lines** mark four prices: spot, the current price (blue); gamma
+  flip (orange); call wall (green); put wall (red). See sections 3 and 5.
+- **Arrow labels** at the top or bottom edge (↑ / ↓) are for those prices
+  when they are outside the strikes shown. The label gives the price and how
+  far it is from spot, for example "↑ call wall $770 (+4.7%)".
 - **Each cell** is the gamma exposure (GEX) of all options at that strike and
   expiration, in US dollars per 1% move.
 
@@ -81,7 +85,8 @@ contract, then repeats that as if price were higher or lower (-10% to +10%).
 - **Negative gamma environment** (below zero): hedging tends to add to moves.
   Expect bigger, trend-like moves.
 - **Gamma flip**: the nearest price where net GEX changes sign. On the image
-  it is the orange dashed line. Usually the flip is below spot in a positive
+  it is the orange dashed line (or an orange ↑ / ↓ label at the edge when it
+  is outside the strikes shown). Usually the flip is below spot in a positive
   environment: if price falls through it, the market moves into negative
   gamma.
 - **Flip very close to spot** (within about 0.5%): the regime is fragile. A

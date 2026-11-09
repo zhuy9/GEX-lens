@@ -31,14 +31,24 @@ clone a public repo, run commands, and send the result privately.
   committed `reference/dividend_schedules.json` (ADR-0003), SPX/NDX labels from
   `reference/conversion_ratios.json` (ADR-0002).
 - Each image shows the signed GEX proxy per 1% move, the 17 strikes around
-  spot, and the nearest 8 expirations, with the same colors as the app, plus
-  spot and gamma-flip lines.
+  spot, and the nearest 8 expirations, with the same colors as the app.
+- The image marks four prices with dashed lines: spot (blue), gamma flip
+  (orange), call wall (green) and put wall (red). The walls are from the
+  nearest expiration, the same ones the summary lists. If a price is outside
+  the 17 strikes shown, there is no line; instead a label with an arrow sits
+  at the top (↑, above) or bottom (↓, below) edge with its distance from spot,
+  for example "↑ gamma flip $776.47 (+5.6%)".
 - The README has a short section that tells an agent exactly what to run and
   what to send back. CI runs the script with `--fixture` (no network) so it
   cannot break silently.
 
 ## PRD/ADR provisions overridden
 
+- PRD section 7 "Do not ... infer support/resistance levels": the daily
+  image marks the call wall and put wall (the strikes with the most call /
+  put open interest). These are already in the summary text and the app's
+  positioning profile; the image only draws them. Approved by the owner on
+  2026-11-08.
 - PRD section 1 "background collection" and the manual-only Nasdaq risk note
   in `docs/source-contract.md`: the owner accepts one scheduled run per day by
   their own agent (about 4 Nasdaq requests). The app itself still refreshes
