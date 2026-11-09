@@ -46,6 +46,12 @@ python ../scripts/daily_heatmap.py
    expirations) and the heatmap itself as a table.
 2. It also saves **two images for the user**: `exports/heatmap-spy.png` and
    `exports/heatmap-qqq.png`. You do not need to read them.
+
+   ![Daily SPY heatmap example (synthetic data)](docs/screenshots/daily-heatmap-spy.png)
+
+   Dashed lines: spot (blue), call wall (green), put wall (red), gamma flip
+   (orange). A price outside the strikes shown gets a ↑ / ↓ label at the edge.
+
 3. Read [docs/interpret-heatmap.md](docs/interpret-heatmap.md) and write the
    daily summary with its template (section 8), using the numbers in
    `heatmap.md`.
