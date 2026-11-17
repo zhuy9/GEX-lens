@@ -306,7 +306,7 @@ def _collect_and_save(
 
         review = fixture_schedule_review(symbol, valuation_at, reviewed_at=attempt_started_at)
     else:
-        # ADR-0003: the committed daily SPY/QQQ schedules join the local file;
+        # ADR-0003: the committed daily SPY/QQQ/AAPL schedules join the local file;
         # the newer reviewed_at wins, so a hand-edited local entry overrides.
         sources = [local_inputs]
         if AUTO_SCHEDULES_PATH.exists():

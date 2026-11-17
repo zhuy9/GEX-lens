@@ -199,12 +199,12 @@ something changes.
   [reference/conversion_ratios.json](reference/conversion_ratios.json). They
   are for display only ([ADR-0002](docs/ADR-0002-index-conversion-ratios.md)).
 - `scripts/update_dividends.py` writes the SPY/QQQ/AAPL dividend schedules. It
-  projects the next ex-date from each symbol's usual quarterly date and uses
-  the last paid amount as the estimate
+  projects the next ex-date from each symbol's usual quarterly date (AAPL:
+  13 weeks after the last one) and uses the last paid amount as the estimate
   ([ADR-0003](docs/ADR-0003-automated-dividend-schedules.md)).
 
-If a step gets bad data, it keeps the old file and the run fails, so GitHub
-emails you.
+If a step gets bad data, it keeps the old data and the run fails, so GitHub
+emails you. The dividend step does this per symbol: the others still update.
 
 ## Using the dashboard
 

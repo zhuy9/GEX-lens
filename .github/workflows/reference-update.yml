@@ -3,9 +3,10 @@ name: Update reference data
 # Once a day after the close, refresh the committed reference/ files from
 # Yahoo (yfinance):
 #   - conversion_ratios.json: display-only SPX/SPY, NDX/QQQ ratios (ADR-0002)
-#   - dividend_schedules.json: projected SPY/QQQ dividend schedules (ADR-0003)
-# Each step leaves its file untouched on bad data and fails the run (GitHub
-# emails you); the other step still runs and its changes are still committed.
+#   - dividend_schedules.json: projected SPY/QQQ/AAPL dividend schedules (ADR-0003)
+# Each step keeps the old data on bad data and fails the run (GitHub emails
+# you); the dividend step does this per symbol. Whatever did update is still
+# committed.
 
 on:
   schedule:

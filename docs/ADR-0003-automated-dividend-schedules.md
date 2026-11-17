@@ -17,10 +17,12 @@ quarterly calendar, amount = last actual), so re-typing it weekly is pure toil.
   actual amount, `amount_status: "estimated"`, `reviewed_at` = run time,
   `source_refs: ["auto:update_dividends.py:..."]`.
 - Projection: SPY ex-date = third Friday of Mar/Jun/Sep/Dec (Thursday when
-  that is Juneteenth); QQQ = the following Monday. The script first checks
-  the rule against Yahoo's last four ex-dates and fails without writing on
-  any mismatch.
-- For `dividend_sources = "manual_schedule"`, `app.py` loads both the local
+  that is Juneteenth); QQQ = the following Monday; AAPL = last ex-date + 13
+  weeks. The script first checks Yahoo's last four ex-dates against the rule
+  (AAPL: every gap 12-14 weeks). A mismatch fails that symbol only: its
+  previous entry is kept unchanged (so its 7-day check blocks it within a
+  week), the other symbols still update, and the run fails.
+- For every non-fixture dividend source, `app.py` loads both the local
   file and this one with the same loader and uses the entry with the newer
   `reviewed_at`. A hand-edited local entry therefore overrides until the next
   run is newer.
@@ -38,8 +40,17 @@ quarterly calendar, amount = last actual), so re-typing it weekly is pure toil.
 
 - Amounts are last-actual estimates (e.g. QQQ Sep 2026 estimate 0.81 vs actual
   0.751); declared amounts are not fetched. Special distributions are not
-  projected; one in Yahoo's last four breaks the pattern check and stops the
-  job.
-- AAPL was added on 2026-10-09: ex-date = second Monday of Feb/May/Aug/Nov
-  (matches its last seven ex-dates). Apple usually raises its dividend in
-  May, so the May estimate can be a little low until it is declared.
+  projected; one in Yahoo's last four breaks the pattern check and stops
+  that symbol's updates.
+- AAPL was added on 2026-10-09 with a "second Monday of Feb/May/Aug/Nov"
+  rule. Amended 2026-11-17: Apple sets each ex-date with its earnings
+  release (Fridays in 2023-24, Mondays 2025-26, Thursday 2026-11-12), so no
+  calendar rule fits; the rule's failure on 2026-11-12 also stopped the
+  SPY/QQQ updates. The 13-week projection has landed within 3 days of the
+  actual date since 2023, and nothing corrects it once Apple declares (Yahoo
+  and Nasdaq both have history only). When the real date is later, as on
+  2026-11-12, AAPL has no dividend in the schedule from the projected date
+  until Yahoo lists the real one, so every AAPL expiry is priced without it
+  for those days. A hand-edited local entry is replaced by the next run.
+  Apple usually raises its dividend in May, so the May estimate can be a
+  little low until it is declared.

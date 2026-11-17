@@ -34,7 +34,7 @@ backend; the ratios never feed spot or analytics.
 
 [ADR-0003](docs/ADR-0003-automated-dividend-schedules.md) lets the same
 workflow write projected SPY/QQQ/AAPL schedules to
-`reference/dividend_schedules.json`; for `manual_schedule`, the backend takes
+`reference/dividend_schedules.json`; for any non-fixture dividend source, the backend takes
 the newer `reviewed_at` of that file and the local `reference_inputs.json`.
 
 ## ADR-0004
