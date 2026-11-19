@@ -2,35 +2,23 @@
 
 [![CI](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml/badge.svg)](https://github.com/zhuy9/GEX-lens/actions/workflows/ci.yml)
 
-A local, single-user dashboard for options gamma exposure (GEX) and implied
-volatility (IV) on SPY, QQQ, and AAPL. Each time you click **Refresh**, it
-fetches one option-chain snapshot, prices it, saves it, and shows:
+A local, single-user dashboard for **gamma exposure (GEX)** and **implied volatility (IV)** on `SPY`, `QQQ`, and `AAPL` (`1–30` calendar DTE). Clicking **Refresh** fetches one option-chain snapshot, prices it with discrete cash dividends and SOFR ([ADR-0001](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)), saves it to DuckDB, and displays:
 
-- a GEX heatmap by strike and expiration, with SPX/NDX levels next to SPY/QQQ
-  strikes,
-- a 3D IV surface,
-- a positioning profile (call wall, put wall, GEX peaks, max pain), and
-- the gamma regime: positive or negative gamma, the gamma flip, and vanna
-  exposure (VEX).
+- **GEX heatmap** by strike and expiration (with approximate `SPX`/`NDX` levels next to `SPY`/`QQQ` strikes)
+- **3D IV surface**
+- **Positioning profile:** call wall, put wall, GEX peaks, and max pain
+- **Gamma regime:** net GEX at spot, gamma flip level, and vanna exposure (VEX)
 
-It covers expirations 1-30 days out (a deliberate choice; the PRD allows up
-to 60). Pricing is a Black-Scholes-Merton model with cash dividends and a
-SOFR rate
-([ADR-0001](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)).
-This is a personal research tool, not a trading system.
+*Personal research tool only — not a live feed, trading system, or financial advice.*
 
 ![GEX heatmap](docs/screenshots/gex-heatmap.png)
 
-## For AI agents (Muse): today's SPY and QQQ heatmap
+---
 
-Example prompt for the agent:
+## For AI Agents (Muse): Daily SPY & QQQ Heatmap
 
-> Every weekday at 9:00 ET, follow the "For AI agents" section of
-> https://github.com/zhuy9/GEX-lens. Send me the SPY and QQQ heatmap images
-> and a daily summary written with docs/interpret-heatmap.md.
-
-Steps for the agent. You only need Python 3.12 (no browser, no Node.js, no
-servers):
+- **Trigger:** Run once per weekday (e.g. `09:00 ET`), never in a loop.
+- **Prerequisites:** Python 3.12 only (no browser, Node.js, or server required).
 
 ```bash
 git clone https://github.com/zhuy9/GEX-lens.git
@@ -40,59 +28,36 @@ pip install -r ../scripts/requirements.txt
 python ../scripts/daily_heatmap.py
 ```
 
-1. The script writes **`exports/heatmap.md`: the text for you to read.** For
-   each symbol it has the key numbers (spot, positive or negative gamma, the
-   gamma flip, vanna exposure (VEX), biggest strikes, walls, biggest
-   expirations) and the heatmap itself as a table.
-2. It also saves **two images for the user**: `exports/heatmap-spy.png` and
-   `exports/heatmap-qqq.png`. You do not need to read them.
+- **Outputs generated (git-ignored under `exports/`):**
+  - `exports/heatmap.md` — **Read this.** Contains exact numbers (spot, gamma regime & flip, VEX, biggest strikes, walls, top expirations) plus the heatmap as a Markdown table.
+  - `exports/heatmap-spy.png` & `exports/heatmap-qqq.png` — **Send these to the user.** (No need to OCR them.)
+    - Dashed lines: `spot` (blue), `call wall` (green), `put wall` (red), `gamma flip` (orange). Levels outside the shown strikes appear as `↑` / `↓` edge labels.
+- **Summary format:** Follow the Section 8 checklist and template in [docs/interpret-heatmap.md](docs/interpret-heatmap.md) using values from `exports/heatmap.md`.
+- **Failure & safety rules:**
+  - `UPSTREAM_ACCESS_DENIED` or `UPSTREAM_RATE_LIMITED`: Nasdaq blocked the request — tell the user and **do not retry**.
+  - `DIVIDEND_REVIEW_REQUIRED`: The [daily data job](#daily-data-job) stopped — tell the user.
+  - Never commit generated files or local config (`daily_heatmap.py` uses temporary settings and DuckDB).
+  - For a zero-network dry run with synthetic data, pass `--fixture` (outputs are labeled `SYNTHETIC FIXTURE DATA`).
+  - Before the 09:30 ET open, prices reflect the prior close and open interest reflects the overnight update. See [ADR-0004](docs/ADR-0004-daily-heatmap-for-agents.md).
 
-   ![Daily SPY heatmap example (synthetic data)](docs/screenshots/daily-heatmap-spy.png)
+![Daily SPY heatmap example (synthetic data)](docs/screenshots/daily-heatmap-spy.png)
 
-   Dashed lines: spot (blue), call wall (green), put wall (red), gamma flip
-   (orange). A price outside the strikes shown gets a ↑ / ↓ label at the edge.
+---
 
-3. Read [docs/interpret-heatmap.md](docs/interpret-heatmap.md) and write the
-   daily summary with its template (section 8), using the numbers in
-   `heatmap.md`.
-4. Send the summary and both images to the user.
+## How to Read the Heatmap
 
-Rules:
+- **Cell values:** Dollar gamma exposure (`gamma * OI * 100 * spot^2 * 1%`) per 1% spot move — **not trading volume**.
+- **Colors:** Green = call gamma (`+`, damping under the standard dealer-positioning assumption); red = put gamma (`-`, amplifying); darker = larger magnitude.
+- **Gamma flip & VEX:** Flip = spot level where net GEX changes sign; VEX = hedging flow per 1-point IV move.
+- **Full guide:** See [docs/interpret-heatmap.md](docs/interpret-heatmap.md) for near vs. far dates, walls, academic evidence, common mistakes, and the daily summary template.
 
-- Run it at most once a day, never in a loop. It makes about 4 requests to
-  Nasdaq and 1 to the New York Fed.
-- `UPSTREAM_ACCESS_DENIED` or `UPSTREAM_RATE_LIMITED` means Nasdaq blocked the
-  request. Tell the user. Do not retry.
-- `DIVIDEND_REVIEW_REQUIRED` means the [daily data job](#daily-data-job) has
-  stopped. Tell the user.
-- Do not commit anything. The script uses its own temporary settings and
-  database.
-- Test run with fake data and no network: add `--fixture`. The images and the
-  output then say "SYNTHETIC FIXTURE DATA".
+---
 
-Before the 9:30 ET open, prices are from the last close; open interest is
-updated overnight. See [How to read the heatmap](#how-to-read-the-heatmap) and
-[ADR-0004](docs/ADR-0004-daily-heatmap-for-agents.md).
+## Quick Start (Local App)
 
-## How to read the heatmap
+Requires **Python 3.12** and **Node.js 24.22.1+**. Fixture mode uses synthetic data with zero network calls.
 
-Each cell is gamma exposure (GEX): open interest times gamma, in dollars of
-hedging per 1% move. It is not trading volume. Green is call gamma, red is
-put gamma, darker is bigger. Under the usual assumption, green areas slow
-price down and red areas let moves speed up. The daily script also reports
-the gamma flip (the price where that changes) and vanna exposure (how hedging
-reacts to IV). None of it predicts direction.
-
-For the full guide (near vs. far dates, walls, gamma flip, VEX, what the
-research says, and the daily summary template), read
-[docs/interpret-heatmap.md](docs/interpret-heatmap.md).
-
-## Quick start
-
-You need Python 3.12 and Node.js 24.22.1+. Fixture mode uses fake data and no
-network.
-
-Backend (run it from `backend/`; paths in `settings.json` are relative to it):
+- **Backend** (run from `backend/`; paths in `settings.json` are relative to `backend/`):
 
 ```bash
 cd backend
@@ -102,7 +67,7 @@ cp settings.example.json settings.json   # git-ignored; never commit it
 python app.py                            # http://127.0.0.1:8000
 ```
 
-Frontend, in a second terminal:
+- **Frontend** (second terminal):
 
 ```bash
 cd frontend
@@ -110,27 +75,27 @@ npm ci
 npm run dev                              # http://127.0.0.1:5173
 ```
 
-Open http://127.0.0.1:5173 and click **Refresh**. On Windows, use
-`py -3.12`, `.venv\Scripts\Activate.ps1`, and `Copy-Item`.
+Open `http://127.0.0.1:5173` and click **Refresh**.
+*(On Windows: use `py -3.12`, `.venv\Scripts\Activate.ps1`, and `Copy-Item`.)*
 
-## Settings (`backend/settings.json`)
+---
 
-Strict JSON: no comments and no extra keys. The backend checks every key at
-startup and will not start on a bad value. All symbols in
-[backend/instruments.py](backend/instruments.py) are always on.
+## Configuration (`backend/settings.json`)
 
-| Key | Values | Notes |
+Strict JSON (no comments or extra keys); validated at startup. Enabled symbols come from [backend/instruments.py](backend/instruments.py).
+
+| Key | Allowed Values | Notes |
 |---|---|---|
-| `source_mode` | `"fixture"`, `"nasdaq"` | Where option chains come from. Read [Data sources](#data-sources-and-usage-rights) before using `"nasdaq"`. |
-| `db_path` | file path | DuckDB file. |
-| `refresh_min_interval_seconds` | integer, 60 or more | Wait time between refreshes, shared by all symbols. |
-| `pricing_model` | `"cash_pv_bsm_v2"` | The only model. |
-| `rate_source` | `"fixture"`, `"nyfed_sofr"`, `"manual"` | `"manual"` reads `manual_rate` from your reference inputs. |
-| `dividend_sources` | one key each for `SPY`, `QQQ`, `AAPL` | Values: `"fixture"`, `"manual_schedule"`, `"nasdaq_dividends"` (QQQ and AAPL only). |
-| `reference_inputs_path` | file path | Your local reference inputs (see below). |
+| `source_mode` | `"fixture"`, `"nasdaq"` | Option-chain source. Review [Data sources & usage rights](#data-sources--usage-rights) before using `"nasdaq"`. |
+| `db_path` | file path | DuckDB database path. |
+| `refresh_min_interval_seconds` | integer `>= 60` | Global cooldown across all symbols. |
+| `pricing_model` | `"cash_pv_bsm_v2"` | Only supported model. |
+| `rate_source` | `"fixture"`, `"nyfed_sofr"`, `"manual"` | `"manual"` reads `manual_rate` from `reference_inputs_path`. |
+| `dividend_sources` | keys `SPY`, `QQQ`, `AAPL` | `"fixture"`, `"manual_schedule"`, or `"nasdaq_dividends"` (`QQQ`/`AAPL` only). |
+| `reference_inputs_path` | file path | Local override file (optional when `rate_source != "manual"` and [reference/dividend_schedules.json](reference/dividend_schedules.json) exists). |
 
-Use `"fixture"` rate and dividend sources only with `source_mode: "fixture"`.
-A live config:
+- **Fixture rule:** Use `"fixture"` rate/dividend sources only with `source_mode: "fixture"`.
+- **Example live config:**
 
 ```json
 {
@@ -144,19 +109,22 @@ A live config:
 }
 ```
 
-## Dividend schedules and reference inputs
+---
 
-Every non-fixture dividend source needs a schedule for that symbol that was
-reviewed in the last 7 days.
+## Dividend Schedules & Reference Inputs
 
-- **SPY, QQQ, and AAPL** get one automatically from
-  [reference/dividend_schedules.json](reference/dividend_schedules.json),
-  which the [daily data job](#daily-data-job) updates. Run `git pull` to get
-  the latest.
-- **Your own override** goes in `backend/reference_inputs.json`
-  (git-ignored). When both files have a symbol, the newer `reviewed_at` wins.
+- **Automated baseline:** `SPY`, `QQQ`, and `AAPL` schedules are committed daily in [reference/dividend_schedules.json](reference/dividend_schedules.json) (`git pull` to update).
+- **Local overrides:** Place manual overrides (or `manual_rate`) in `backend/reference_inputs.json` (git-ignored).
+- **Precedence rules:**
+  - Every non-fixture source requires a schedule reviewed within `0–7` days (`REVIEW_MAX_AGE_DAYS`).
+  - Among fresh reviews (`<= 7d`), any schedule with `"declared"` events beats an `"estimated"`-only schedule; ties break by newest `reviewed_at`.
+  - Coverage must span `today .. latest in-scope expiration` (`<= 30` DTE).
+  - An empty `expected_events: []` asserts no dividends in that window.
+  - `amount_status`: `"declared"` or `"estimated"` (with `amount`), or `"pending_source"` (`amount: null`, `"nasdaq_dividends"` only).
+- **Parity cross-check:** `backend/analytics.py` compares scheduled `pv_dividends` against near-ATM put-call parity (`±5%` strikes) and emits `DIVIDEND_PARITY_DIVERGENCE` if they disagree.
 
-Fake example:
+<details>
+<summary>Example <code>backend/reference_inputs.json</code> override</summary>
 
 ```json
 {
@@ -171,62 +139,52 @@ Fake example:
       "no_other_events_expected": true,
       "source_refs": ["my-review"],
       "expected_events": [
-        {"event_id": "aapl-2026q1", "ex_date": "2026-02-09", "payment_date": null,
-         "amount": "0.26", "amount_status": "estimated", "source_ref": "my-estimate"}
+        {
+          "event_id": "aapl-2026q1",
+          "ex_date": "2026-02-09",
+          "payment_date": null,
+          "amount": "0.26",
+          "amount_status": "declared",
+          "source_ref": "apple-ir"
+        }
       ]
     }
   }
 }
 ```
 
-Main rules (full rules: ADR-0001 Sections 5.2 and 7):
+</details>
 
-- `reviewed_at` must be 0-7 days old. Timestamps need a timezone.
-- Coverage must start on or before today and end on or after the last
-  expiration in use (up to 30 days out).
-- An empty `expected_events` list means "no dividends in this window".
-- `amount_status` is `"declared"` or `"estimated"` (with an amount), or
-  `"pending_source"` (amount `null`, only with `"nasdaq_dividends"`).
-- `manual_rate` is needed only when `rate_source` is `"manual"`.
+---
 
-## Daily data job
+## Daily Data Job
 
-[.github/workflows/reference-update.yml](.github/workflows/reference-update.yml)
-runs every weekday at 22:00 UTC (after the US close). It commits only when
-something changes.
+[.github/workflows/reference-update.yml](.github/workflows/reference-update.yml) runs weekdays at `22:00 UTC` (after the US close) and commits only when outputs change:
 
-- `scripts/update_ratios.py` writes the SPX/SPY and NDX/QQQ ratios to
-  [reference/conversion_ratios.json](reference/conversion_ratios.json). They
-  are for display only ([ADR-0002](docs/ADR-0002-index-conversion-ratios.md)).
-- `scripts/update_dividends.py` writes the SPY/QQQ/AAPL dividend schedules. It
-  projects the next ex-date from each symbol's usual quarterly date (AAPL:
-  13 weeks after the last one) and uses the last paid amount as the estimate
-  ([ADR-0003](docs/ADR-0003-automated-dividend-schedules.md)).
+- `scripts/update_ratios.py` → [reference/conversion_ratios.json](reference/conversion_ratios.json): Display-only `SPX/SPY` and `NDX/QQQ` ratios ([ADR-0002](docs/ADR-0002-index-conversion-ratios.md)).
+- `scripts/update_dividends.py` → [reference/dividend_schedules.json](reference/dividend_schedules.json): `SPY` (3rd Fri, shifting Thu on Good Friday/Juneteenth), `QQQ` (following Mon), `AAPL` (Yahoo `Ticker.info['exDividendDate']` when already declared ahead of history, else `+13 weeks` with a `7`-day pre-ex grace hold) ([ADR-0003](docs/ADR-0003-automated-dividend-schedules.md)).
+- **Failure isolation:** Bad data preserves the prior entry (per symbol for dividends) so other symbols still update, and fails the workflow so GitHub sends an alert.
 
-If a step gets bad data, it keeps the old data and the run fails, so GitHub
-emails you. The dividend step does this per symbol: the others still update.
+---
 
-## Using the dashboard
+## Using the Dashboard & API
 
-- **Refresh** is the only thing that fetches data. Nothing refreshes on its
-  own.
-- **Refresh including reference inputs** (Pricing inputs panel) skips the
-  cached rate (kept 1 hour) and dividends (kept 6 hours).
-- The app keeps the latest 20 snapshots per symbol.
-- Warnings appear on the Snapshot card and on each chart.
+- **Manual refresh only:** Nothing polls or auto-refreshes.
+- **Cache bypass:** **Refresh including reference inputs** ignores the 1h SOFR cache and 6h dividend cache.
+- **Retention & warnings:** Keeps the latest 20 snapshots per symbol; warnings appear in `SnapshotMeta` and panel headers.
 
-API (at `http://127.0.0.1:8000`):
-
-| Method | Path | Does |
+| Method | Endpoint | Purpose |
 |---|---|---|
-| GET | `/api/health` | Checks the database |
-| GET | `/api/config` | Symbols, scope, refresh wait time |
-| GET | `/api/dashboard/{symbol}` | Latest saved snapshot (no fetching) |
-| POST | `/api/dashboard/{symbol}/refresh` | Fetch, price, save. Add `?force_reference_refresh=true` to skip the caches. |
+| `GET` | `/api/health` | Database connectivity check |
+| `GET` | `/api/config` | Enabled symbols, scope, cooldown state |
+| `GET` | `/api/dashboard/{symbol}` | Latest saved snapshot (no network fetch) |
+| `POST` | `/api/dashboard/{symbol}/refresh` | Fetch, price, and save (`?force_reference_refresh=true` bypasses reference caches) |
 
-## Checks
+---
 
-The same checks CI runs:
+## Verification & Offline Reconciliation
+
+- **CI checks:**
 
 ```bash
 cd backend
@@ -239,14 +197,9 @@ cd ../frontend
 npm run lint && npm run build && npm test
 ```
 
-`tests/test_performance.py` checks speed. Its results depend on the machine,
-so CI skips it.
+*(CI skips `tests/test_performance.py` because timings are hardware-dependent.)*
 
-## Offline reconciliation
-
-`backend/reconcile.py` reruns one saved snapshot with a different rate and
-dividend schedule and compares the results. It is read-only and never fetches
-data. Stop the backend first, since it opens the same database.
+- **Offline counterfactual reconciliation** (stop the backend first so DuckDB isn't locked):
 
 ```bash
 cd backend
@@ -255,63 +208,42 @@ python reconcile.py --db data/options.duckdb --snapshot-id <uuid> \
   --out exports/<uuid>-pricing-comparison
 ```
 
-The scenario file uses the reference-inputs format and needs a `manual_rate`
-and a schedule for the snapshot's symbol. If the script cannot first
-reproduce the saved values, it exits with `BASELINE_REPRODUCTION_FAILED`,
-which points to a bug.
+The scenario file requires both `manual_rate` and a schedule for the snapshot's symbol. If the baseline fails to reproduce saved IV/gamma/exclusions, `reconcile.py` exits with `BASELINE_REPRODUCTION_FAILED`.
 
-## Adding a data source or symbol
+---
 
-- Data adapters implement the Protocols in
-  [backend/provider.py](backend/provider.py) and are registered in a
-  `build_*` function in [backend/app.py](backend/app.py).
-- To add a symbol, verify its data first (see the source-contract docs), then
-  add it to [backend/instruments.py](backend/instruments.py) and to
-  `dividend_sources`.
-- Spot must come from the option-chain response, never from a separate quote
-  endpoint.
+## Extending Sources or Symbols
 
-## Documentation
+- **Providers:** Implement the Protocols in [backend/provider.py](backend/provider.py) and wire them in `build_*` inside [backend/app.py](backend/app.py).
+- **New symbols:** Verify both chain and dividend endpoints first (see source contracts), then add to [backend/instruments.py](backend/instruments.py) and `dividend_sources`.
+- **Spot rule:** Underlying price must always come from the option-chain payload, never a separate quote endpoint.
 
-- [Product requirements](docs/options_analytics_mvp_prd.md)
-- [ADR-0001: pricing inputs, dividends, and GEX units](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md)
-- [ADR-0002: SPX/NDX conversion ratios](docs/ADR-0002-index-conversion-ratios.md)
-- [ADR-0003: automated SPY/QQQ/AAPL dividend schedules](docs/ADR-0003-automated-dividend-schedules.md)
-- [ADR-0004: daily heatmap for AI agents](docs/ADR-0004-daily-heatmap-for-agents.md)
-- [ADR-0005: gamma flip and vanna exposure](docs/ADR-0005-gamma-flip-and-vanna.md)
-- [How to read the heatmap](docs/interpret-heatmap.md)
-- Data-source contracts: [Nasdaq option chain](docs/source-contract.md),
-  [Nasdaq dividends](docs/dividend-source-contract.md),
-  [NY Fed SOFR](docs/rate-source-contract.md)
+---
 
-## Data sources and usage rights
+## Documentation Index
 
-- **Nasdaq** (option chains; dividends for QQQ and AAPL): unofficial website
-  endpoints. This project is not linked to or approved by Nasdaq and grants no
-  data license. Read [Nasdaq's terms](https://www.nasdaq.com/legal) before
-  using `"nasdaq"` or `"nasdaq_dividends"`.
-- **New York Fed SOFR** (`"nyfed_sofr"`): the public rates API.
-- **Yahoo Finance via [yfinance](https://github.com/ranaroussi/yfinance)**
-  (Apache-2.0): used only by the daily data job, for the SPX/NDX ratios and
-  SPY/QQQ/AAPL dividend history. yfinance is unofficial and not linked to Yahoo.
-  Read [Yahoo's terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html).
-  Only derived values are committed, never raw quotes.
-- Fixtures, tests, and screenshots use fake data. Never commit real market
-  data, databases, credentials, or exports.
+- **Specs & ADRs:** [PRD](docs/options_analytics_mvp_prd.md) · [ADR-0001](docs/ADR-0001-pricing-inputs-dividends-and-gex-units.md) · [ADR-0002](docs/ADR-0002-index-conversion-ratios.md) · [ADR-0003](docs/ADR-0003-automated-dividend-schedules.md) · [ADR-0004](docs/ADR-0004-daily-heatmap-for-agents.md) · [ADR-0005](docs/ADR-0005-gamma-flip-and-vanna.md)
+- **Guides:** [How to read the heatmap](docs/interpret-heatmap.md)
+- **Data contracts:** [Nasdaq option chain](docs/source-contract.md) · [Nasdaq dividends](docs/dividend-source-contract.md) · [NY Fed SOFR](docs/rate-source-contract.md)
 
-## Limitations
+---
 
-- Snapshots only: not a live feed, not investment advice, not a trading
-  signal.
-- The model is European-style; it does not handle early exercise of
-  American options.
-- Open interest does not tell you who holds the positions.
-- SOFR is used as a flat overnight rate, not a term curve.
-- Nasdaq chains have no per-quote times, no multiplier field, and only a
-  price date for spot ([docs/source-contract.md](docs/source-contract.md)).
-- Estimated dividends are the last paid amount, not the declared one.
+## Data Sources & Usage Rights
 
-## License
+- **Nasdaq** (`"nasdaq"`, `"nasdaq_dividends"`): Unofficial endpoints; no affiliation or license. Review [Nasdaq's terms](https://www.nasdaq.com/legal) before enabling.
+- **NY Fed SOFR** (`"nyfed_sofr"`): Public New York Fed rates API.
+- **Yahoo Finance via [yfinance](https://github.com/ranaroussi/yfinance)** (Apache-2.0): Used *only* by the daily GitHub Action for ratios and dividend history; unofficial and not affiliated with Yahoo ([Yahoo terms](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html)). Only derived values are committed.
+- **Repo hygiene:** Fixtures, tests, and screenshots use synthetic data. Never commit real market data, databases, credentials, or `exports/`.
 
-[MIT](LICENSE) for this project's code. Third-party parts and market data
-keep their own licenses.
+---
+
+## Limitations & License
+
+- **Limitations:**
+  - Point-in-time snapshots only (not a live feed or trading signal).
+  - European BSM approximation (no American early-exercise modeling).
+  - Open interest does not identify who is long or short.
+  - SOFR is treated as a flat overnight rate, not a term curve.
+  - Nasdaq chains lack per-quote timestamps, multiplier fields, and intraday spot timestamps ([docs/source-contract.md](docs/source-contract.md)).
+  - Projected dividends default to last-paid amounts unless overridden with `"declared"` inputs.
+- **License:** [MIT](LICENSE) for this repository's code; third-party dependencies and market data keep their own licenses.

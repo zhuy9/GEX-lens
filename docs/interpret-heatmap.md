@@ -1,161 +1,121 @@
-# How to read the GEX heatmap
+# How to Read the GEX Heatmap
 
-A plain-English guide for people and for AI agents (Muse) that write the daily
-summary. It explains what the heatmap shows, what it may mean, what the
-research supports, and how to write a short daily summary.
+A plain-English reference for both **people** and **AI agents (Muse)** writing the daily summary.
 
-## 1. What you are looking at
+## Quick Reference
 
-- **Rows** are strike prices. SPY and QQQ rows also show the SPX or NDX level.
-- **Columns** are expiration dates, nearest on the left (up to 30 days out).
-- **Dashed lines** mark four prices: spot, the current price (blue); gamma
-  flip (orange); call wall (green); put wall (red). See sections 3 and 5.
-- **Arrow labels** at the top or bottom edge (↑ / ↓) are for those prices
-  when they are outside the strikes shown. The label gives the price and how
-  far it is from spot, for example "↑ call wall $770 (+4.7%)".
-- **Each cell** is the gamma exposure (GEX) of all options at that strike and
-  expiration, in US dollars per 1% move.
+- **Rows:** Strike prices (with approximate `SPX`/`NDX` equivalents on `SPY`/`QQQ`).
+- **Columns:** Expiration dates from left (nearest) to right (`1–30` DTE).
+- **Colors:** Green = positive/call gamma (damping); red = negative/put gamma (amplifying); darker = larger dollar exposure.
+- **Markers:** Dashed lines for `spot` (blue), `gamma flip` (orange), nearest-expiry `call wall` (green), and `put wall` (red). Out-of-window levels appear as `↑` / `↓` edge labels with `%` distance from spot.
+- **Core rule:** GEX describes **expected move size/character (calm vs. fast)**, **never price direction**.
 
-GEX is **not trading volume**. It is:
+---
+
+## 1. What Each Cell Measures
 
 ```text
-gamma x open interest x 100 shares x spot^2 x 1%
+GEX = gamma × open interest × 100 shares × spot² × 1%
 ```
 
-In plain words: if the price moves 1%, how many dollars of stock would the
-people who sold those options have to buy or sell to stay hedged. A cell of
-$500M means about $500M of hedging per 1% move, from that one strike and date.
+- **Not trading volume:** Each cell is the estimated stock dollars that option dealers must buy or sell per `1%` spot move to stay delta-hedged.
+- **Example:** A `$500M` cell means roughly `$500M` of hedging flow per `1%` move from that strike and expiration.
+- **Sign convention:** Calls are counted `+` (green) and puts `-` (red). **Gross** mode in the web app sums absolute magnitudes without signs.
 
-**Color:** the app counts call gamma as positive (green) and put gamma as
-negative (red). Darker means bigger. "Gross" mode in the app shows total size
-with no sign.
+---
 
-## 2. The big assumption
+## 2. The Positioning Assumption
 
-The colors only mean something if you assume **who is on the other side**.
-The usual assumption (from the SqueezeMetrics GEX paper) is:
+GEX signs depend on **who holds the other side of open interest**. Following the SqueezeMetrics convention:
 
-- investors **sell calls**, so market makers are **long calls** (long gamma), and
-- investors **buy puts**, so market makers are **short puts** (short gamma).
+- **Calls:** Assumed investors **sell** calls → market makers are **long** calls (`+` gamma).
+- **Puts:** Assumed investors **buy** puts → market makers are **short** puts (`-` gamma).
 
-Open interest does not show who is long or short. This assumption is often
-roughly right for SPY and QQQ, but it can be wrong (for example, when many
-investors buy calls). Treat every reading below as "if the assumption holds".
+Open interest alone does not prove who is long or short. This assumption works reasonably well on index ETFs (`SPY`, `QQQ`) most of the time, but can break down (e.g. heavy retail call-buying). Treat every interpretation below as conditional on this assumption holding.
 
-## 3. How to read it
+---
 
-| What you see | What it may mean |
+## 3. Reading Levels & Colors
+
+| Pattern | Typical Interpretation (if assumption holds) |
 |---|---|
-| Big **green** strike | Market makers are long gamma there. They sell when price rises and buy when it falls. That slows price down near the strike. Above spot, it often acts like a ceiling. |
-| Big **red** strike | Market makers are short gamma there. They sell when price falls and buy when it rises. That can speed moves up. Below spot, it is support that can break fast. |
-| Spot sits in **mostly green** (net GEX near spot > 0) | Calmer, back-and-forth trading is more likely. Moves away from spot tend to be pulled back. |
-| Spot sits in **mostly red** (net GEX near spot < 0) | Bigger, trend-like moves are more likely, in either direction. |
-| **Call wall** / **put wall** | The strikes with the most call / put open interest in the nearest expiration. Watched as resistance / support. They are raw open interest, not GEX. |
-| **Max pain** | The strike where all options together would pay out the least at expiration. Some traders watch it on expiration day. It is an accounting number, not a force. |
+| Large **green** strike | Dealers are long gamma: they sell rallies and buy dips, damping moves. Above spot, often acts like resistance/a ceiling. |
+| Large **red** strike | Dealers are short gamma: they buy rallies and sell dips, amplifying moves. Below spot, support that can accelerate quickly if broken. |
+| Spot surrounded by **green** (net GEX > 0) | Mean-reverting, range-bound tape is more likely. |
+| Spot surrounded by **red** (net GEX < 0) | Larger, trend-like moves in either direction are more likely. |
+| **Call wall / Put wall** | Highest call / put **open interest** strike in the nearest expiration (raw OI, not GEX). Commonly watched as magnet/resistance or support. |
+| **Max pain** | Strike where total option payout at expiry is minimized. An accounting point, not a market force. |
 
-## 4. Time: near dates vs. far dates
+---
 
-Gamma per contract depends on time left. For an at-the-money option it grows
-roughly like `1 / sqrt(days left)`: the same open interest has about **5x more
-gamma at 1 day than at 25 days**. Very close to expiration, gamma is high only
-at strikes right next to spot and almost zero elsewhere.
+## 4. Time Decay: Near Dates vs. Far Dates
 
-What this means for reading the heatmap:
+At-the-money gamma scales roughly as `1 / sqrt(days left)`:
 
-- **Left columns matter most today.** They have the most gamma near spot.
-- **A big cell on a far date** means a lot of open interest there, because far
-  dates start with little gamma per contract. Its effect is small today and
-  **grows as that date gets closer**, if spot stays near the strike.
-- **Big monthly or quarterly expirations** (the third Friday of the month) often
-  show as large columns. Before they expire, price may "pin" near big strikes.
-  After they expire, that gamma disappears, and the support or ceiling it gave
-  goes away. Moves can get bigger after a large expiration.
-- **A big value tomorrow but nothing after it** means that level only matters
-  until tomorrow's close.
+- **Near expirations dominate today:** The same open interest carries **~5× more gamma at 1 DTE than at 25 DTE**, concentrated tightly around spot.
+- **Far-date clusters are latent:** A large cell weeks out signals heavy open interest whose hedging impact is small today but **grows as expiration approaches** (if spot stays near it).
+- **Monthly/quarterly expirations (3rd Friday):** Often hold the largest columns. Price may "pin" near big strikes before expiry, then move more freely once that gamma rolls off.
+- **Expiring levels:** A big strike expiring tomorrow disappears at tomorrow's close.
 
-## 5. Gamma flip and vanna exposure (VEX)
+---
 
-The script prints both for SPY and QQQ ([ADR-0005](ADR-0005-gamma-flip-and-vanna.md)).
+## 5. Gamma Flip & Vanna Exposure (VEX)
 
-**Environment and gamma flip.** The script adds up the GEX of every
-contract, then repeats that as if price were higher or lower (-10% to +10%).
+Both are computed across `1–30` DTE contracts ([ADR-0005](ADR-0005-gamma-flip-and-vanna.md)):
 
-- **Positive gamma environment** (net GEX at spot above zero): hedging tends
-  to damp moves. Expect more back-and-forth trading.
-- **Negative gamma environment** (below zero): hedging tends to add to moves.
-  Expect bigger, trend-like moves.
-- **Gamma flip**: the nearest price where net GEX changes sign. On the image
-  it is the orange dashed line (or an orange ↑ / ↓ label at the edge when it
-  is outside the strikes shown). Usually the flip is below spot in a positive
-  environment: if price falls through it, the market moves into negative
-  gamma.
-- **Flip very close to spot** (within about 0.5%): the regime is fragile. A
-  small move can switch it.
-- **No flip within ±10%**: the regime is unlikely to change in normal days.
+- **Environment & Gamma Flip:**
+  - Re-sums total net GEX across a `-10%` to `+10%` spot scan (holding each contract's IV fixed).
+  - **Positive gamma** (`net GEX at spot > 0`): hedging damps volatility; **negative gamma** (`< 0`): hedging amplifies moves.
+  - **Gamma flip:** Nearest spot level where net GEX crosses zero (orange dashed line / edge label).
+  - **Flip within `~0.5%` of spot:** Regime is fragile — a small move can flip hedging behavior.
+  - **No flip within `±10%`:** Regime is unlikely to change during normal sessions.
+- **Vanna Exposure (VEX):**
+  - Measures delta-hedging dollars triggered per `+1` IV point change (call-positive, put-negative).
+  - **VEX > 0:** Falling IV (post-event crush, calm drift up) **buys** stock; rising IV (sell-off) **sells** stock.
+  - **VEX < 0:** Opposite flows.
+  - Most relevant around scheduled catalysts (FOMC, CPI, earnings) and large expirations.
+- **Limits:** Sticky-strike IV understates flip shifts during sharp sell-offs (when IV spikes), and `1–30` DTE totals will differ from full-chain vendor numbers.
 
-**Vanna exposure (VEX).** Vanna is how much an option's delta changes when IV
-changes. VEX adds it up across contracts, in dollars of hedging per 1 IV
-point, with the same call-positive/put-negative sign.
+---
 
-- **VEX > 0**: if IV falls (often after an event, or in a calm rally), hedging
-  **buys** stock; if IV jumps (often in a sell-off), hedging **sells**. This
-  is the "vanna rally" idea when IV drops.
-- **VEX < 0**: the reverse.
-- VEX matters most around events (Fed, CPI, earnings) and into big
-  expirations, when IV moves the most.
+## 6. What the Research Supports
 
-Limits: IV is held fixed per contract while price moves, so in a real
-sell-off (where IV rises) the true flip can be different. Only 1-30 day
-expirations are counted, so numbers will differ from vendor sites.
-
-## 6. What the research says
-
-| Claim | Evidence |
+| Claim | Evidence Strength |
 |---|---|
-| Short-gamma hedging trades with the move and adds momentum | Strong. Baltussen, Da, Lammers, Martens, *Journal of Financial Economics* (2021): gamma hedging predicts the last 30 minutes of the day across 60+ futures markets. |
-| Negative gamma goes with momentum, positive with reversal, more so in less liquid markets | Good. Barbon and Buraschi, "Gamma Fragility" (working paper, 2020-2021). |
-| Price "pins" to strikes with big open interest on expiration day | Good. Ni, Pearson, Poteshman (2005): stocks close at strikes on expiration days more often than chance. Not every time. |
-| 0DTE (same-day) options make the market unstable | Weak. Dim, Eraker, Vilkov (2024) found little evidence. (This app does not include 0DTE.) |
-| Exact call wall / put wall levels hold | Weak. Popular with traders, little formal research. |
-| "Zero-gamma flip" level, vanna and charm flows into expiration | Mostly vendor commentary, not peer-reviewed. The positive/negative gamma regime behind the flip is supported by the papers above. |
+| Short-gamma hedging trades with the move and adds intraday momentum | **Strong** — Baltussen, Da, Lammers, Martens (*JFE*, 2021): gamma hedging predicts last-30-min returns across 60+ futures markets. |
+| Negative gamma correlates with momentum; positive with mean reversion | **Good** — Barbon & Buraschi, *"Gamma Fragility"* (2020–2021). |
+| Stocks pin near high-OI strikes on expiration day | **Good** — Ni, Pearson, Poteshman (*JFE*, 2005): statistically above chance, though not guaranteed. |
+| 0DTE options destabilize the broader market | **Weak** — Dim, Eraker, Vilkov (2024) found little evidence. *(This app excludes 0DTE.)* |
+| Exact call/put wall levels hold as hard barriers | **Weak** — Popular trader heuristic, little formal support. |
+| Exact zero-gamma flip, vanna, and charm pinpoints | **Practitioner rule of thumb** — Underlying positive/negative regime is supported; exact flip/VEX levels are mostly vendor commentary. |
 
-Bottom line: GEX tells you about the **likely size and style** of moves
-(calm vs. fast). It does **not** tell you the direction.
+---
 
-## 7. Common mistakes
+## 7. Common Mistakes to Avoid
 
-- Reading GEX as volume or as buy/sell orders.
-- Treating a wall as a guaranteed turning point.
-- Ignoring the date: a big level that expires tomorrow is gone the day after.
-- Forgetting the snapshot is from the last close if you read it before the
-  open, and that open interest is updated only once a day.
-- Treating the gamma flip as an exact line. It is an estimate that moves
-  every day.
-- Calling it a trading signal. It is context, not advice.
+- Treating GEX as trading volume or directional order flow.
+- Treating call/put walls or gamma flip as exact, guaranteed turning points.
+- Ignoring expiration dates (tomorrow's big level vanishes after tomorrow's close).
+- Forgetting pre-open timing (before 09:30 ET, prices are prior close; OI is overnight).
+- Calling any GEX reading a buy/sell signal.
 
-## 8. Daily summary recipe (for Muse)
+---
 
-Read `exports/heatmap.md`, which `scripts/daily_heatmap.py` writes. It has the
-facts and the heatmap as a table. Quote its numbers; do not read numbers off
-the images. The images (`exports/heatmap-spy.png`, `exports/heatmap-qqq.png`)
-are for the user: send them with the summary.
+## 8. Daily Summary Recipe (for Muse)
 
-For each symbol (SPY, then QQQ):
+- **Source of truth:** Read `exports/heatmap.md` (written by `scripts/daily_heatmap.py`). Always quote its exact numbers — never read numbers off the PNGs.
+- **Attachments:** Send `exports/heatmap-spy.png` and `exports/heatmap-qqq.png` alongside the summary.
+- **Synthetic check:** If `exports/heatmap.md` says `SYNTHETIC FIXTURE DATA`, state clearly that it is test data and do not present it as live market data.
 
-1. **Regime:** say POSITIVE or NEGATIVE gamma, and where the gamma flip is
-   (with its SPX/NDX level and distance from spot). If the flip is within
-   about 0.5% of spot, say the regime is fragile.
-2. **VEX:** one short line: what hedging does if IV falls or rises.
-3. **Levels:** name the biggest positive strike above spot (possible ceiling)
-   and the biggest negative strike below spot (possible fast-break support),
-   with their SPX/NDX levels. Mention the call wall and put wall.
-4. **Dates:** say which expiration is the largest. If it is not the nearest
-   one, say its effect grows as it gets closer. If a big date expires this
-   week, say levels may change after it.
-5. **Caveat:** one short line saying this assumes the usual market-maker
-   positioning and is not advice.
+**Checklist for each symbol (`SPY`, then `QQQ`):**
 
-Template (keep it under about 150 words):
+1. **Regime:** State `POSITIVE` or `NEGATIVE` gamma and the gamma flip (`$`, `~SPX`/`~NDX`, `%` from spot). Flag as *fragile* if flip is within `~0.5%` of spot.
+2. **VEX:** One line on whether falling/rising IV triggers hedging buys or sells.
+3. **Key strikes & walls:** Name the largest positive strike above spot, largest negative strike below spot (with index equivalents), and nearest-expiry call/put walls.
+4. **Expirations:** Name the largest expiration by gross GEX; note if it expires this week or grows as it nears.
+5. **Caveat:** One short line noting the positioning assumption and that it is research only.
+
+**Template (target `< 150` words):**
 
 ```text
 GEX daily, <date> (data: <data line>)
@@ -171,23 +131,13 @@ QQQ $<spot> (~NDX <level>): <same lines>
 Assumes the usual market-maker positioning. Research only. Not financial advice.
 ```
 
-If the output says "SYNTHETIC FIXTURE DATA", say so and do not summarize it as
-real data.
+---
 
 ## Sources
 
-- SqueezeMetrics, "Gamma Exposure" white paper (the source of the call-positive,
-  put-negative assumption):
-  [PDF](https://squeezemetrics.com/monitor/download/pdf/white_paper.pdf)
-- Baltussen, Da, Lammers, Martens, "Hedging Demand and Market Intraday
-  Momentum", *Journal of Financial Economics* 142 (2021):
-  [PDF](https://www3.nd.edu/~zda/intramom.pdf)
-- Barbon, Buraschi, "Gamma Fragility":
-  [paper page](https://abarbon.com/papers/gamma-fragility)
-- Ni, Pearson, Poteshman, "Stock Price Clustering on Option Expiration Dates",
-  *Journal of Financial Economics* (2005):
-  [summary](https://scholars.hkbu.edu.hk/en/publications/stock-price-clustering-on-option-expiration-dates-3/)
-- Avellaneda, Kasyan, Lipkin, stock pinning model:
-  [slides](https://math.nyu.edu/inmemoriam/avellaneda/PinningSlides.pdf)
-- Dim, Eraker, Vilkov, "0DTEs: Trading, Gamma Risk and Volatility Propagation"
-  (2024): [review](https://harbourfrontquant.substack.com/p/the-rise-of-0dte-options-cause-for)
+- SqueezeMetrics, *"Gamma Exposure"* white paper: [PDF](https://squeezemetrics.com/monitor/download/pdf/white_paper.pdf)
+- Baltussen, Da, Lammers, Martens, *"Hedging Demand and Market Intraday Momentum"*, *Journal of Financial Economics* 142 (2021): [PDF](https://www3.nd.edu/~zda/intramom.pdf)
+- Barbon & Buraschi, *"Gamma Fragility"*: [paper page](https://abarbon.com/papers/gamma-fragility)
+- Ni, Pearson, Poteshman, *"Stock Price Clustering on Option Expiration Dates"*, *JFE* (2005): [summary](https://scholars.hkbu.edu.hk/en/publications/stock-price-clustering-on-option-expiration-dates-3/)
+- Avellaneda, Kasyan, Lipkin, stock pinning model: [slides](https://math.nyu.edu/inmemoriam/avellaneda/PinningSlides.pdf)
+- Dim, Eraker, Vilkov, *"0DTEs: Trading, Gamma Risk and Volatility Propagation"* (2024): [review](https://harbourfrontquant.substack.com/p/the-rise-of-0dte-options-cause-for)

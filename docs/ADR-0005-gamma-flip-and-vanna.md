@@ -1,64 +1,32 @@
-# ADR-0005: Gamma flip and vanna exposure (VEX)
+# ADR-0005: Gamma Flip and Vanna Exposure (VEX)
 
-Status: accepted (2026-10-09)
+**Status:** Accepted (2026-10-09)
 
 ## Problem
 
-The daily summary (ADR-0004) says whether the market is in positive or
-negative gamma, but not **how far** price is from changing that, and not how
-hedging reacts when implied volatility (IV) moves. Two standard measures
-answer these: the gamma flip and vanna exposure.
+Net GEX at spot shows the current gamma sign, but not **how far spot must move to flip sign** or **how dealer hedging reacts when implied volatility (IV) moves**.
 
 ## Decision
 
-Add three pure functions to `backend/analytics.py`, next to the existing BSM
-code, using the same model, inputs, and call-positive/put-negative sign as
-the GEX heatmap:
+- **Pure functions in `backend/analytics.py`** (using `ExposureLeg` with `model_spot = spot - pv_dividends` and call-positive / put-negative convention):
+  - `net_gex_at(legs, spot)`: Total signed GEX per 1% move at a hypothetical `spot` (sticky-strike IV per contract).
+  - `gamma_flip(legs, spot)`: Scans `-10%` to `+10%` in `0.25%` steps (`FLIP_GRID`), linearly interpolates sign crossings, and returns the crossing nearest today's `spot` (or `None`).
+  - `vanna_exposure_by_strike(legs, spot)`: `bsm_vanna * open_interest * 100 * spot * 0.01` (dollars of hedge change per `+1` IV point).
+- **Persistence & UI (`build_gamma_profile`):**
+  - Computed on every refresh and stored as optional `gamma_profile` (`net_gex_at_spot`, `gamma_flip`, `vanna_exposure`, `top_vanna_strikes`) on `DashboardResponseV2` (older snapshots remain valid without it).
+  - Displayed in the dashboard regime line, as an amber gamma-flip row on the heatmap, and in `scripts/daily_heatmap.py`.
+- **Reading the numbers:**
+  - **Environment:** `net_gex_at_spot > 0` (damping) vs. `< 0` (amplifying).
+  - **Gamma flip:** Nearest sign-change price; within `~0.5%` of spot indicates a fragile regime.
+  - **VEX > 0:** Falling IV causes hedging to **buy** stock; rising IV causes hedging to **sell** (`VEX < 0` is the reverse).
 
-- `net_gex_at(legs, spot)`: total signed GEX per 1% move if the underlying
-  were at `spot`. Each contract keeps its own IV (sticky strike). At today's
-  spot it is the same per-contract formula as the heatmap.
-- `gamma_flip(legs, spot)`: tries spot levels from -10% to +10% in 0.25%
-  steps, finds where `net_gex_at` changes sign, and returns the crossing
-  nearest today's spot (linear interpolation), or none.
-- `vanna_exposure_by_strike(legs, spot)`: vanna (change in delta per change
-  in IV) x open interest x 100 x spot x 1%, signed the same way. Unit: dollars
-  of hedge change per 1 IV point.
+## PRD Overrides
 
-`ExposureLeg` carries one priced contract with its expiry's time, rate, and
-PV of dividends, so the model spot is `spot - PV(dividends)`, as in ADR-0001
-Section 9.
-
-Update (2026-10-09): `build_gamma_profile` runs on every refresh and saves
-the result in the snapshot as an optional `gamma_profile` field
-(`net_gex_at_spot`, `gamma_flip`, `vanna_exposure`, `top_vanna_strikes`).
-Snapshots saved earlier simply lack it. The dashboard shows the regime line
-and an amber gamma-flip row on the heatmap; `scripts/daily_heatmap.py` reads
-the same saved values.
-
-How to read the output:
-
-- **Environment** is the sign of net GEX at today's spot: positive (moves
-  tend to be damped) or negative (moves tend to be amplified).
-- **Gamma flip** is the nearest price where that sign changes. A flip close
-  to spot means the regime can change with a small move.
-- **VEX > 0**: if IV falls 1 point, hedging buys about VEX dollars of stock;
-  if IV rises, it sells. VEX < 0 is the reverse.
-
-## PRD provisions overridden
-
-- PRD section 1 "Do not implement: gamma-flip/profile calculations": allowed
-  for the dashboard and the daily summary.
-- PRD Section 6.3 "Calculate only IV and gamma; delta, theta, vega, and rho are
-  out of scope": vanna is added, for the same uses.
+- **PRD Section 1** (*"Do not implement gamma-flip/profile calculations"*): Allowed for the dashboard and daily summary.
+- **PRD Section 6.3** (*"Calculate only IV and gamma"*): Adds vanna for `gamma_profile` and the daily summary.
 
 ## Limits
 
-- IV is held fixed while spot moves. In a real sell-off IV usually rises,
-  so the true flip can differ.
-- Only expirations 1-30 days out are counted (no 0DTE, nothing longer), so
-  values will not match vendors such as SpotGamma.
-- Same positioning assumption as GEX (investors sell calls and buy puts).
-  Open interest does not show who is long or short.
-- Vanna and charm flow ideas are mostly practitioner commentary, not
-  peer-reviewed research (see `docs/interpret-heatmap.md`).
+- **Sticky-strike IV:** Spot scans hold each contract's IV fixed; in real sell-offs IV rises, so the realized flip level can shift.
+- **1–30 DTE scope:** Excludes 0DTE and >30 DTE expirations, so totals will differ from external vendors.
+- **Positioning & research:** Assumes dealers are long calls / short puts; vanna/charm flow narratives are practitioner rules of thumb rather than peer-reviewed consensus (see [docs/interpret-heatmap.md](interpret-heatmap.md)).

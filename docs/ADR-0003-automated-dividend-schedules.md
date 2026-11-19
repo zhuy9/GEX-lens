@@ -1,61 +1,36 @@
-# ADR-0003: Automated SPY/QQQ/AAPL dividend schedules
+# ADR-0003: Automated SPY/QQQ/AAPL Dividend Schedules
 
-Status: accepted (2026-10-09)
+**Status:** Accepted (2026-10-09; amended 2026-11-18)
 
 ## Problem
 
-ADR-0001 7.3 requires an owner-reviewed schedule no older than 7 days
-(`REVIEW_MAX_AGE_DAYS`). For SPY and QQQ the review is mechanical (same
-quarterly calendar, amount = last actual), so re-typing it weekly is pure toil.
+- ADR-0001 Section 7.3 requires an owner-reviewed dividend schedule no older than `7` days (`REVIEW_MAX_AGE_DAYS`).
+- Weekly manual updates for `SPY`, `QQQ`, and `AAPL` are repetitive toil when ex-dates and amounts follow predictable rules or can be read from Yahoo.
 
 ## Decision
 
-- `.github/workflows/reference-update.yml` (weekdays 22:00 UTC) runs
-  `scripts/update_dividends.py`, which reads Yahoo dividend history (yfinance)
-  and writes `reference/dividend_schedules.json` in the `reference_inputs.json`
-  format: coverage today..today+45d, any projected ex-date in it with the last
-  actual amount, `amount_status: "estimated"`, `reviewed_at` = run time,
-  `source_refs: ["auto:update_dividends.py:..."]`.
-- Projection: SPY ex-date = third Friday of Mar/Jun/Sep/Dec (Thursday when
-  that is Good Friday or Juneteenth); QQQ = the following Monday; AAPL =
-  Yahoo `Ticker.info['exDividendDate']` when already declared past the last
-  actual ex-date, otherwise last ex-date + 13 weeks (held on the next weekday
-  for up to 7 days if still awaiting the actual row, then failing beyond 14
-  weeks). The script first checks Yahoo's last four ex-dates against the rule
-  (AAPL: every gap 12-14 weeks). A mismatch fails that symbol only: its
-  previous entry is kept unchanged (so its 7-day check blocks it within a
-  week), the other symbols still update, and the run fails.
-- For every non-fixture dividend source, `app.py` loads both the local
-  file (if present, or required when `rate_source == "manual"`) and this
-  one with the same loader. Among fresh reviews (`<= 7` days old), one
-  containing `"declared"` events takes precedence over an `"estimated"`-only
-  schedule, breaking ties by newer `reviewed_at` (so daily auto runs do not
-  clobber a fresh hand-edited `"declared"` entry until it ages out).
+- **Daily job:** [.github/workflows/reference-update.yml](../.github/workflows/reference-update.yml) (weekdays `22:00 UTC`) runs `scripts/update_dividends.py` using `yfinance` and writes `reference/dividend_schedules.json` in `reference_inputs.json` format:
+  - **Window:** `today .. today + 45d` (`COVERAGE_DAYS = 45`, sized for `MAX_CALENDAR_DTE = 30` + `7d` buffer).
+  - **Amount:** Last actual payout from Yahoo (`amount_status: "estimated"`, `source_refs: ["auto:update_dividends.py:..."]`).
+- **Ex-date rules:**
+  - `SPY`: 3rd Friday of Mar/Jun/Sep/Dec (shifts to Thursday if Good Friday or Juneteenth).
+  - `QQQ`: Monday after the 3rd Friday of Mar/Jun/Sep/Dec.
+  - `AAPL`: Uses Yahoo `Ticker.info['exDividendDate']` (and `'dividendDate'`) when already declared past the last actual ex-date; otherwise projects `last_ex_date + 13 weeks`.
+    - *Pre-ex dead zone guard:* If `+13w` passed by `<= 7` days without a new Yahoo history row yet, holds an unconfirmed event on the next weekday so AAPL does not silently drop to `$0` right before going ex; fails beyond 14 weeks.
+- **Validation & isolation:** Each symbol validates Yahoo's last 4 ex-dates against its pattern (AAPL: every gap 12–14 weeks). A mismatch fails **that symbol only** (keeping its prior entry so the 7-day check blocks it within a week), updates the remaining symbols, and exits non-zero.
+- **Backend precedence (`backend/app.py`, `backend/market_inputs.py`):**
+  - Loads both local `reference_inputs.json` (optional when `rate_source != "manual"` and `reference/dividend_schedules.json` exists) and `reference/dividend_schedules.json`.
+  - Among fresh reviews (`<= 7d`), a review containing `"declared"` events beats `"estimated"`-only schedules, breaking ties by newest `reviewed_at`.
+- **Sanity cross-check (`backend/analytics.py`):**
+  - `parity_dividend_warnings()` compares scheduled `pv_dividends` against median near-ATM (`±5%`) put-call parity per expiry and emits `DIVIDEND_PARITY_DIVERGENCE` on mismatch.
 
-## PRD/ADR-0001 provisions overridden
+## PRD / ADR-0001 Overrides
 
-- ADR-0001 7.3 owner review: for SPY/QQQ, the scheduled projection stands in
-  for the owner's review. The 7-day age check is unchanged and now doubles as
-  the pipeline health check: if the job stops (or refuses), refreshes block
-  with `DIVIDEND_REVIEW_REQUIRED` within a week.
-- PRD section 1 "background collection": extended to this daily
-  dividend-history fetch (ADR-0002 already allowed the ratio fetch).
+- **ADR-0001 Section 7.3** (*Owner review*): Automated projections stand in for manual weekly sign-off; the unchanged 7-day age check acts as the pipeline health check (`DIVIDEND_REVIEW_REQUIRED`).
+- **PRD Section 1** (*No background collection*): Extended to this daily dividend-history fetch.
 
 ## Limits
 
-- Amounts are last-actual estimates (e.g. QQQ Sep 2026 estimate 0.81 vs actual
-  0.751); declared amounts are not fetched. Special distributions are not
-  projected; one in Yahoo's last four breaks the pattern check and stops
-  that symbol's updates.
-- AAPL was added on 2026-10-09 with a "second Monday of Feb/May/Aug/Nov"
-  rule. Amended 2026-11-17: Apple sets each ex-date with its earnings
-  release (Fridays in 2023-24, Mondays 2025-26, Thursday 2026-11-12), so no
-  calendar rule fits; the rule's failure on 2026-11-12 also stopped the
-  SPY/QQQ updates. The 13-week projection has landed within 3 days of the
-  actual date since 2023, and nothing corrects it once Apple declares (Yahoo
-  and Nasdaq both have history only). When the real date is later, as on
-  2026-11-12, AAPL has no dividend in the schedule from the projected date
-  until Yahoo lists the real one, so every AAPL expiry is priced without it
-  for those days. A hand-edited local entry is replaced by the next run.
-  Apple usually raises its dividend in May, so the May estimate can be a
-  little low until it is declared.
+- **Estimated amounts:** Uses the last actual amount (e.g., QQQ Sep 2026 estimated `0.81` vs. actual `0.751`; Apple typically raises in May).
+- **Special dividends:** Not projected; any special dividend in Yahoo's last 4 rows breaks the pattern check and blocks that symbol until manually reviewed.
+- **AAPL timing:** Apple sets ex-dates with earnings (Fridays 2023–24, Mondays 2025–26, Thu 2026-11-12). Before Yahoo `Ticker.info` surfaces a newly declared date, the `+13w` estimate can be off by ~1–3 days.

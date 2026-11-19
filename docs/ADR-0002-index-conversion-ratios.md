@@ -1,46 +1,29 @@
-# ADR-0002: Display-only index conversion ratios
+# ADR-0002: Display-Only Index Conversion Ratios
 
-Status: accepted (2026-10-09)
+**Status:** Accepted (2026-10-09)
+
+## Problem
+
+Users often think in index points (`SPX` / `NDX`), while the app fetches and prices ETF option chains (`SPY` / `QQQ`).
 
 ## Decision
 
-Show the SPX equivalent of each SPY strike, and the NDX equivalent of each
-QQQ strike, on the GEX heatmap's strike axis and spot row.
+- **UI display:** Show the approximate `SPX` level next to each `SPY` strike and `NDX` next to each `QQQ` strike on the heatmap axis and spot row.
+- **Daily job:** [.github/workflows/reference-update.yml](../.github/workflows/reference-update.yml) runs `scripts/update_ratios.py` weekdays at `22:00 UTC` (after the 16:00 ET close in both EST and EDT) and on manual dispatch.
+- **Computation:** `scripts/update_ratios.py` fetches 1-minute closes for `SPY`, `^GSPC`, `QQQ`, `^NDX` via `yfinance`, takes the latest minute with all four present, and writes `index / etf` to [reference/conversion_ratios.json](../reference/conversion_ratios.json).
+- **Failure handling:** Out-of-range or non-finite ratios fail the step without overwriting the file; the Action commits only on diff.
+- **Frontend consumption:** Built directly into the frontend from JSON; `AAPL` (no entry) displays no conversion.
 
-- `.github/workflows/reference-update.yml` runs once per weekday at 22:00 UTC
-  (after the 16:00 ET close in EDT and EST) and on manual dispatch.
-- `scripts/update_ratios.py` downloads 1-minute closes for SPY,
-  `^GSPC`, QQQ, `^NDX` from Yahoo via yfinance, takes the last minute where all
-  four have a close, and writes `index / etf` to
-  `reference/conversion_ratios.json`. Out-of-range or non-finite ratios
-  fail the run without touching the file.
-- The Action commits only when the file changes. The last committed value is
-  the fallback; the UI shows its as-of time in the strike header tooltip.
-- The frontend imports the JSON at build time. Symbols without an entry
-  (AAPL) show no conversion.
+## PRD / ADR-0001 Overrides
 
-## PRD/ADR-0001 provisions overridden
-
-- ADR-0001 Section 10 "No SPY-to-SPX strike rescaling, relabeling, or inferred
-  index equivalence": the heatmap may show an index level next to each
-  SPY/QQQ strike, labeled as an approximation with its ratio and as-of time.
-  The strike itself and all calculations stay in ETF terms.
-- PRD section 1 "background collection" / "additional live data providers":
-  allowed for this one scheduled, ratio-only Yahoo fetch.
-- PRD section 4 / ADR-0001 section 4 module layout: adds
-  `scripts/update_ratios.py` and the JSON file. Nothing is added to
-  `backend/`; yfinance is not a backend dependency.
+- **ADR-0001 Section 10** (*"No SPY-to-SPX strike rescaling"*): Allows display-only index approximations labeled with their ratio and as-of time; all strikes and calculations remain in ETF terms.
+- **PRD Section 1** (*"No background collection / additional live providers"*): Allows this single scheduled ratio-only Yahoo fetch.
+- **PRD Section 4 / ADR-0001 Section 4** (*Module layout*): Adds `scripts/update_ratios.py` and `reference/conversion_ratios.json`; `yfinance` never enters `backend/`.
 
 ## Limits
 
-- Display only. Spot still comes only from the option-chain payload; the
-  ratio never enters analytics, storage, or snapshots.
-- A ratio from yesterday's close is off by the drift since then (SPY/QQQ
-  expense accrual and dividend steps): well under one index point per day,
-  plus a step on each ETF ex-dividend date until the next run.
-- yfinance is unofficial and Yahoo's terms restrict automated use; this is the
-  owner's risk decision, as with the Nasdaq endpoint. Only the derived ratios
-  are committed.
+- **Display only:** Ratios never feed spot, analytics, storage, or snapshots.
+- **Intraday drift:** Yesterday's close ratio drifts slightly intraday (< 1 index point/day) and steps on ETF ex-dividend dates until the next run.
+- **Source terms:** `yfinance` is unofficial; only derived ratios are committed.
 
-See [ADR-0003](ADR-0003-automated-dividend-schedules.md) for the dividend
-schedules the same workflow now writes.
+See [ADR-0003](ADR-0003-automated-dividend-schedules.md) for the dividend schedules updated by the same workflow.

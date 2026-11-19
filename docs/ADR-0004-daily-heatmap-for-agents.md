@@ -1,66 +1,34 @@
-# ADR-0004: Daily SPY/QQQ heatmap for an AI agent (Muse)
+# ADR-0004: Daily SPY/QQQ Heatmap for AI Agents (Muse)
 
-Status: accepted (2026-10-09)
+**Status:** Accepted (2026-10-09; updated 2026-11-18)
 
 ## Problem
 
-The owner wants a daily look at the SPY and QQQ GEX heatmaps without opening
-the app. Posting them to a GitHub issue would make Nasdaq-derived data public,
-because this repo is public. The owner instead uses an AI agent (Muse) that can
-clone a public repo, run commands, and send the result privately.
+The owner wants a daily view of `SPY` and `QQQ` GEX heatmaps without opening the app or posting Nasdaq-derived data to a public GitHub issue. An outside AI agent (Muse) can clone the repo, run one command, and send the summary and images privately.
 
 ## Decision
 
-- Add `scripts/daily_heatmap.py`. One command fetches SPY and QQQ and saves
-  `exports/heatmap-spy.png` and `exports/heatmap-qqq.png` (git-ignored) with
-  matplotlib, so the agent needs no browser. (A first version wrote an HTML
-  page to screenshot; that needed a headless browser and was replaced.)
-  matplotlib is listed in `scripts/requirements.txt`, not in the backend's.
-- Text is the agent's main input; the images are for people. The script
-  writes `exports/heatmap.md` with the key numbers (gamma regime and flip,
-  VEX, net GEX near spot, biggest strikes, walls, biggest expirations) and
-  the same heatmap window as a Markdown table, so the agent quotes exact
-  values instead of reading them off an image.
-- `docs/interpret-heatmap.md` explains how to read the heatmap, with sources,
-  and gives the agent a daily summary template.
-- The script calls the backend's own refresh code (`app._collect_and_save`)
-  with its own temporary settings and database. The math is the same as the
-  app's. It does not read or change `backend/settings.json`, the local
-  `reference_inputs.json`, or saved snapshots.
-- Inputs: chain from Nasdaq, rate from the New York Fed, dividends from the
-  committed `reference/dividend_schedules.json` (ADR-0003), SPX/NDX labels from
-  `reference/conversion_ratios.json` (ADR-0002).
-- Each image shows the signed GEX proxy per 1% move, the 17 strikes around
-  spot, and the nearest 8 expirations, with the same colors as the app.
-- The image marks four prices with dashed lines: spot (blue), gamma flip
-  (orange), call wall (green) and put wall (red). The walls are from the
-  nearest expiration, the same ones the summary lists. If a price is outside
-  the 17 strikes shown, there is no line; instead a label with an arrow sits
-  at the top (↑, above) or bottom (↓, below) edge with its distance from spot,
-  for example "↑ gamma flip $776.47 (+5.6%)".
-- The README has a short section that tells an agent exactly what to run and
-  what to send back. CI runs the script with `--fixture` (no network) so it
-  cannot break silently.
+- **Script (`scripts/daily_heatmap.py`):**
+  - Reuses the backend's own `app._collect_and_save` with temporary settings and a temporary DuckDB file (never touches `backend/settings.json`, `reference_inputs.json`, or saved snapshots).
+  - Supports `--fixture` for zero-network CI verification.
+- **Outputs (git-ignored under `exports/`):**
+  - `exports/heatmap.md`: Key summary metrics (spot, gamma regime & flip, VEX, near-spot net GEX, top strikes, walls, largest expirations) plus the exact heatmap window as a Markdown table so the agent quotes numbers without OCR.
+  - `exports/heatmap-spy.png` and `exports/heatmap-qqq.png`: Rendered via Matplotlib (`scripts/requirements.txt`, never a backend dependency), matching app colors across the 17 spot-centered strikes and nearest 8 expirations.
+  - **Atomic PNG writes & metadata:** Writes via a temporary directory (`os.replace`) so each run gets a fresh filesystem birth time, and embeds an RFC 1123 `Creation Time` PNG `tEXt` chunk.
+- **Price level markers:**
+  - Dashed lines for `spot` (blue), `gamma flip` (orange), nearest-expiry `call wall` (green), and `put wall` (red).
+  - Out-of-window levels render as edge labels with `↑` / `↓` and `%` distance from spot.
+- **Data inputs:** Nasdaq chains, NY Fed SOFR rates, `reference/dividend_schedules.json` (ADR-0003), and `reference/conversion_ratios.json` (ADR-0002).
+- **Interpretation guide:** `docs/interpret-heatmap.md` documents how to read the heatmap and provides Muse's summary template.
 
-## PRD/ADR provisions overridden
+## PRD / ADR Overrides
 
-- PRD section 7 "Do not ... infer support/resistance levels": the daily
-  image marks the call wall and put wall (the strikes with the most call /
-  put open interest). These are already in the summary text and the app's
-  positioning profile; the image only draws them. Approved by the owner on
-  2026-11-08.
-- PRD section 1 "background collection" and the manual-only Nasdaq risk note
-  in `docs/source-contract.md`: the owner accepts one scheduled run per day by
-  their own agent (about 4 Nasdaq requests). The app itself still refreshes
-  only by hand; nothing in the server polls.
-- Fixed module layout: adds `scripts/daily_heatmap.py`. It imports the backend
-  but is not part of it.
+- **PRD Section 7** (*"Do not infer support/resistance levels"*): Allowed for drawing the nearest-expiry call wall and put wall (already present in positioning profiles; approved 2026-11-08).
+- **PRD Section 1** (*"Manual refresh only"*): Allows one scheduled daily agent run (~4 Nasdaq requests); the web app itself still has zero polling.
+- **Module layout:** Adds `scripts/daily_heatmap.py`; imports `backend/` without adding dependencies to `backend/`.
 
 ## Limits
 
-- Before the 9:30 ET open, option prices are from the last close, so IVs and
-  gammas reflect that close. Open interest is updated overnight.
-- Nasdaq may block the agent's network. The script then fails with
-  `UPSTREAM_ACCESS_DENIED` or `UPSTREAM_RATE_LIMITED`, and the agent must not
-  retry.
-- The page is a picture of one snapshot, not a feed. It is for research only.
+- **Pre-open data:** Before 09:30 ET, option prices reflect the prior close while open interest reflects the overnight update.
+- **Upstream blocks:** `UPSTREAM_ACCESS_DENIED` or `UPSTREAM_RATE_LIMITED` fails immediately; the agent must report and not retry.
+- **Scope:** Single-snapshot research visual, not a live feed or trading signal.
