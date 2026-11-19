@@ -42,6 +42,7 @@ from market_inputs import (
     resolve_dividend_schedule,
     resolve_market_inputs,
     resolve_rate,
+    select_schedule_review,
     validate_review_freshness,
 )
 from models import (
@@ -285,11 +286,12 @@ def _collect_and_save(
     # valuation time (Section 4). Read the local file at most once, only
     # when this attempt actually needs it (Section 5.2/8.2).
     dividend_source = settings.dividend_sources[symbol]
-    local_inputs = (
-        load_local_reference_inputs(Path(settings.reference_inputs_path))
-        if settings.rate_source == "manual" or dividend_source != "fixture"
-        else None
+    local_path = Path(settings.reference_inputs_path)
+    auto_exists = AUTO_SCHEDULES_PATH.exists()
+    need_local = settings.rate_source == "manual" or (
+        dividend_source != "fixture" and (local_path.exists() or not auto_exists)
     )
+    local_inputs = load_local_reference_inputs(local_path) if need_local else None
 
     resolved_rate = resolve_rate(
         rate_source=settings.rate_source,
@@ -307,9 +309,10 @@ def _collect_and_save(
         review = fixture_schedule_review(symbol, valuation_at, reviewed_at=attempt_started_at)
     else:
         # ADR-0003: the committed daily SPY/QQQ/AAPL schedules join the local file;
-        # the newer reviewed_at wins, so a hand-edited local entry overrides.
+        # among fresh reviews, declared schedules take precedence over estimated
+        # ones before falling back to newest reviewed_at.
         sources = [local_inputs]
-        if AUTO_SCHEDULES_PATH.exists():
+        if auto_exists:
             sources.append(load_local_reference_inputs(AUTO_SCHEDULES_PATH))
         reviews = [s.schedules[symbol] for s in sources if s is not None and symbol in s.schedules]
         if not reviews:
@@ -317,7 +320,7 @@ def _collect_and_save(
                 "DIVIDEND_REVIEW_REQUIRED",
                 f"No reviewed schedule for {symbol!r} in {settings.reference_inputs_path}",
             )
-        review = max(reviews, key=lambda r: r.reviewed_at)
+        review = select_schedule_review(reviews, attempt_started_at=attempt_started_at)
 
     # C05: freshness is this live refresh's own operational policy, not the
     # resolver's -- the offline counterfactual diagnostic (reconcile.py)

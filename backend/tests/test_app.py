@@ -791,6 +791,87 @@ def test_newest_of_local_and_auto_schedule_wins(
     assert body.get("error", {}).get("code") == error_code, body
 
 
+def test_fresh_declared_local_schedule_beats_newer_estimated_auto_schedule(tmp_path, monkeypatch):
+    def make_inputs(age_days: int, *, status: str, amount: str) -> str:
+        return json.dumps(
+            {
+                "input_schema_version": 1,
+                "manual_rate": None,
+                "schedules": {
+                    "SPY": {
+                        "symbol": "SPY",
+                        "reviewed_at": (datetime.now(UTC) - timedelta(days=age_days)).isoformat(),
+                        "coverage_start": "2026-01-02",
+                        "coverage_end": "2026-04-02",
+                        "no_other_events_expected": True,
+                        "source_refs": ["synthetic"],
+                        "expected_events": [
+                            {
+                                "event_id": "spy-2026-03",
+                                "ex_date": "2026-03-20",
+                                "payment_date": None,
+                                "amount": amount,
+                                "amount_status": status,
+                                "source_ref": "test",
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+
+    local_path, auto_path = tmp_path / "local.json", tmp_path / "auto.json"
+    local_path.write_text(make_inputs(2, status="declared", amount="2.10"))
+    auto_path.write_text(make_inputs(0, status="estimated", amount="1.80"))
+    monkeypatch.setattr("app.AUTO_SCHEDULES_PATH", auto_path)
+    settings = make_settings(str(tmp_path / "t.duckdb")).model_copy(
+        update={
+            "dividend_sources": {"SPY": "manual_schedule", "QQQ": "fixture", "AAPL": "fixture"},
+            "reference_inputs_path": str(local_path),
+        }
+    )
+    with TestClient(create_app(settings, provider=StubProvider(make_snapshot("fixture")))) as client:
+        body = client.post("/api/dashboard/SPY/refresh").json()
+    events = body["market_inputs"]["dividend_schedule"]["events"]
+    assert len(events) == 1
+    assert events[0]["amount"] == "2.10"
+    assert events[0]["amount_status"] == "owner_declared"
+
+
+def test_missing_local_reference_inputs_is_allowed_when_auto_schedule_covers_symbol(tmp_path, monkeypatch):
+    auto_path = tmp_path / "auto.json"
+    auto_path.write_text(
+        json.dumps(
+            {
+                "input_schema_version": 1,
+                "manual_rate": None,
+                "schedules": {
+                    "SPY": {
+                        "symbol": "SPY",
+                        "reviewed_at": datetime.now(UTC).isoformat(),
+                        "coverage_start": "2026-01-02",
+                        "coverage_end": "2026-04-02",
+                        "no_other_events_expected": True,
+                        "source_refs": ["auto:test"],
+                        "expected_events": [],
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr("app.AUTO_SCHEDULES_PATH", auto_path)
+    settings = make_settings(str(tmp_path / "t.duckdb")).model_copy(
+        update={
+            "dividend_sources": {"SPY": "manual_schedule", "QQQ": "fixture", "AAPL": "fixture"},
+            "reference_inputs_path": str(tmp_path / "does-not-exist.json"),
+        }
+    )
+    with TestClient(create_app(settings, provider=StubProvider(make_snapshot("fixture")))) as client:
+        response = client.post("/api/dashboard/SPY/refresh")
+    assert response.status_code == 200
+    assert "error" not in response.json()
+
+
 def test_refresh_saves_gamma_profile(tmp_path):
     # ADR-0005: computed on refresh, saved with the snapshot, returned by GET.
     client = TestClient(create_app(make_settings(str(tmp_path / "t.duckdb"))))

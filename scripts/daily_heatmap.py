@@ -50,8 +50,6 @@ LEVELS = (("Call wall", "call_wall_strike"), ("Put wall", "put_wall_strike"), ("
 def fetch(fixture: bool) -> dict[str, dict]:
     """One fresh dashboard per symbol (gamma_profile included, ADR-0005)."""
     tmp = Path(tempfile.mkdtemp())
-    empty_inputs = {"input_schema_version": 1, "manual_rate": None, "schedules": {}}
-    (tmp / "reference_inputs.json").write_text(json.dumps(empty_inputs))
     source = "fixture" if fixture else "manual_schedule"
     settings = Settings(
         source_mode="fixture" if fixture else "nasdaq",

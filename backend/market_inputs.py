@@ -7,6 +7,7 @@ snapshot uses, validates coverage, and combines reviewed schedules.
 
 import hashlib
 import json
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 
@@ -220,6 +221,32 @@ def _validate_review_coverage(
         )
 
 
+def _is_review_fresh(review: ScheduleReview, *, attempt_started_at: datetime) -> bool:
+    review_age_days = (ny_local_date(attempt_started_at) - ny_local_date(review.reviewed_at)).days
+    return 0 <= review_age_days <= REVIEW_MAX_AGE_DAYS
+
+
+def select_schedule_review(
+    reviews: Sequence[ScheduleReview], *, attempt_started_at: datetime
+) -> ScheduleReview:
+    """Choose the active schedule review among local and auto sources.
+
+    Fresh reviews beat stale ones; among fresh reviews, a schedule carrying at
+    least one 'declared' event beats an 'estimated'-only schedule so daily
+    auto-updates cannot overwrite a manual declared override. Ties break by
+    newest reviewed_at.
+    """
+    fresh = [r for r in reviews if _is_review_fresh(r, attempt_started_at=attempt_started_at)]
+    pool = fresh or list(reviews)
+    return max(
+        pool,
+        key=lambda r: (
+            any(e.amount_status == "declared" for e in r.expected_events),
+            r.reviewed_at,
+        ),
+    )
+
+
 def validate_review_freshness(review: ScheduleReview, *, attempt_started_at: datetime) -> None:
     """Live-only operational policy (Section 7.3/8.2): a review authored too
     long ago (or, per C05, one whose reviewed_at is still in this attempt's
@@ -227,8 +254,8 @@ def validate_review_freshness(review: ScheduleReview, *, attempt_started_at: dat
     never from the read-only counterfactual diagnostic, which must not
     require a later-authored review to have existed before its historical
     snapshot's valuation time."""
-    review_age_days = (ny_local_date(attempt_started_at) - ny_local_date(review.reviewed_at)).days
-    if not (0 <= review_age_days <= REVIEW_MAX_AGE_DAYS):
+    if not _is_review_fresh(review, attempt_started_at=attempt_started_at):
+        review_age_days = (ny_local_date(attempt_started_at) - ny_local_date(review.reviewed_at)).days
         raise ProviderError(
             "DIVIDEND_REVIEW_REQUIRED",
             f"{review.symbol}: review is {review_age_days} days old (reviewed_at={review.reviewed_at})",

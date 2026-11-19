@@ -26,9 +26,11 @@ quarterly calendar, amount = last actual), so re-typing it weekly is pure toil.
   previous entry is kept unchanged (so its 7-day check blocks it within a
   week), the other symbols still update, and the run fails.
 - For every non-fixture dividend source, `app.py` loads both the local
-  file and this one with the same loader and uses the entry with the newer
-  `reviewed_at`. A hand-edited local entry therefore overrides until the next
-  run is newer.
+  file (if present, or required when `rate_source == "manual"`) and this
+  one with the same loader. Among fresh reviews (`<= 7` days old), one
+  containing `"declared"` events takes precedence over an `"estimated"`-only
+  schedule, breaking ties by newer `reviewed_at` (so daily auto runs do not
+  clobber a fresh hand-edited `"declared"` entry until it ages out).
 
 ## PRD/ADR-0001 provisions overridden
 
