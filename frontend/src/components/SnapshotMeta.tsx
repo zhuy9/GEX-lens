@@ -30,6 +30,8 @@ const WARNING_TEXT: Record<string, string> = {
 		"A source-reported amount replaced an earlier estimate for at least one event.",
 	DIVIDEND_AMOUNT_ESTIMATED:
 		"At least one event's amount is an estimate, not a source-confirmed figure.",
+	DIVIDEND_PARITY_DIVERGENCE:
+		"Near-ATM put-call parity implies a different dividend PV than the reviewed schedule (ex-date or amount may differ).",
 	FLAT_OVERNIGHT_RATE_PROXY:
 		"SOFR is used as a flat overnight rate proxy, not a term curve.",
 };

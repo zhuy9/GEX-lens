@@ -36,6 +36,19 @@ describe("ADR-0001 9.5: required model disclosures", () => {
 		expect(screen.queryByText("NEAR_EX_DIVIDEND")).not.toBeInTheDocument();
 	});
 
+	it("shows descriptive text for DIVIDEND_PARITY_DIVERGENCE", () => {
+		const dashboard = makeDashboardV2({
+			warnings: ["DIVIDEND_PARITY_DIVERGENCE"],
+		});
+		render(<SnapshotMeta dashboard={dashboard} offsetMs={0} />);
+		expect(
+			screen.getByText(/put-call parity implies a different dividend PV/i),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByText("DIVIDEND_PARITY_DIVERGENCE"),
+		).not.toBeInTheDocument();
+	});
+
 	it("shows an unknown-timestamp label instead of a fabricated date", () => {
 		const dashboard = makeDashboardV2({ chain_asof: null, spot_asof: null });
 		render(<SnapshotMeta dashboard={dashboard} offsetMs={0} />);

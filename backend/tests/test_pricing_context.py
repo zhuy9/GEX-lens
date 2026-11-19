@@ -19,6 +19,8 @@ from analytics import (
     bsm_price,
     build_expiry_pricing_context,
     check_price_time_alignment,
+    implied_dividend_pv,
+    parity_dividend_warnings,
     price_quote_v2,
     solve_iv,
 )
@@ -616,3 +618,65 @@ def test_context_raises_on_a_known_cross_ex_mismatch():
             spot_asof=ex_at + timedelta(minutes=1),
         )
     assert exc.value.code == "DIVIDEND_PRICE_TIME_MISMATCH"
+
+
+def test_parity_check_matches_schedule_pv_when_consistent_and_warns_when_divergent():
+    expiration = date(2026, 1, 31)
+    true_event = make_dividend(ex_date="2026-01-15", amount="1.50", payment_date="2026-01-15")
+    true_ctx = build_expiry_pricing_context(
+        expiration=expiration,
+        valuation_at=VALUATION_AT,
+        actual_spot=100.0,
+        r_cc=0.04,
+        dividend_events=(true_event,),
+    )
+    quotes = []
+    for strike in (97.0, 99.0, 100.0, 101.0, 103.0):
+        for opt in ("C", "P"):
+            mid = bsm_price(opt, true_ctx.model_spot, strike, true_ctx.T, true_ctx.r_cc, 0.0, 0.25)
+            quotes.append(
+                make_quote(
+                    expiration=expiration,
+                    strike=Decimal(str(strike)),
+                    option_type=opt,
+                    bid=round(mid - 0.02, 4),
+                    ask=round(mid + 0.02, 4),
+                    last=round(mid, 4),
+                )
+            )
+
+    # Consistent schedule: parity agrees within tolerance -> no warning.
+    priced_ok, _, _, _ = analyze_snapshot_v2(
+        tuple(quotes),
+        actual_spot=100.0,
+        contexts={expiration: true_ctx},
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
+        source_row_count=1,
+    )
+    est = implied_dividend_pv(priced_ok, true_ctx)
+    assert est is not None
+    assert est[0] == pytest.approx(true_ctx.pv_dividends, abs=1e-3)
+    assert parity_dividend_warnings(priced_ok, {expiration: true_ctx}) == ()
+
+    # Missing dividend in schedule ($0 PV vs $1.50 priced in market): warns.
+    zero_ctx = build_expiry_pricing_context(
+        expiration=expiration,
+        valuation_at=VALUATION_AT,
+        actual_spot=100.0,
+        r_cc=0.04,
+        dividend_events=(),
+    )
+    priced_missing, _, _, _ = analyze_snapshot_v2(
+        tuple(quotes),
+        actual_spot=100.0,
+        contexts={expiration: zero_ctx},
+        min_calendar_dte=1,
+        max_calendar_dte=60,
+        min_strike_pct=0.80,
+        max_strike_pct=1.20,
+        source_row_count=1,
+    )
+    assert parity_dividend_warnings(priced_missing, {expiration: zero_ctx}) == ("DIVIDEND_PARITY_DIVERGENCE",)

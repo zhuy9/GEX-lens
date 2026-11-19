@@ -34,6 +34,7 @@ from analytics import (
     build_expiry_pricing_context,
     build_gamma_profile,
     build_positioning_profiles,
+    parity_dividend_warnings,
 )
 from instruments import INSTRUMENTS
 from market_inputs import (
@@ -382,6 +383,9 @@ def _collect_and_save(
         max_strike_pct=MAX_STRIKE_PCT,
         source_row_count=snapshot.source_row_count,
     )
+    for code in parity_dividend_warnings(priced, contexts):
+        if code not in warnings:
+            warnings.append(code)
     positioning = build_positioning_profiles(priced, snapshot.underlying_price, valuation_at)
 
     snapshot_id = uuid4()

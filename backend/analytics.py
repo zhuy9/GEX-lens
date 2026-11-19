@@ -5,6 +5,7 @@ from bisect import bisect_left
 from collections import Counter
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from statistics import median
 from typing import NamedTuple
 
 from scipy.optimize import brentq
@@ -39,6 +40,8 @@ MAX_RELATIVE_SPREAD = 0.50
 MODEL_BOUNDS_TOLERANCE = 1e-8
 MIN_TIME_VALUE = 0.01
 NEAR_EX_DIVIDEND_DAYS = 7
+PARITY_STRIKE_BAND = 0.05  # near-ATM band for put-call parity cross-check
+PARITY_MIN_TOLERANCE = 0.15  # ignore penny spread/rounding noise below $0.15
 # Strike scope is not defined here: app.py owns the one MIN/MAX_STRIKE_PCT
 # constant (it also reports the value as policy in ConfigResponse/
 # Parameters) and passes it into price_quote/analyze_snapshot below, so the
@@ -325,6 +328,59 @@ def build_expiry_pricing_context(
         warnings=tuple(warnings),
         status=status,
     )
+
+
+def implied_dividend_pv(
+    priced_quotes: tuple[PricedQuote, ...],
+    context: ExpiryPricingContext,
+) -> tuple[float, float] | None:
+    """Estimate (median_implied_pv, tolerance) for one expiry from near-ATM
+    put-call parity: PV_implied(K) = S - K * exp(-r*T) - (C_mid - P_mid).
+
+    Returns None when fewer than MIN_SLICE_STRIKES liquid near-ATM call/put
+    pairs exist for that expiry.
+    """
+    if context.status != "OK" or context.T <= 0 or context.actual_spot <= 0:
+        return None
+    pairs: dict[float, dict[str, PricedQuote]] = {}
+    for pq in priced_quotes:
+        if pq.quote.expiration != context.expiration or pq.exclusion_reason is not None or pq.mid is None:
+            continue
+        strike = float(pq.quote.strike)
+        if abs(strike / context.actual_spot - 1.0) > PARITY_STRIKE_BAND:
+            continue
+        pairs.setdefault(strike, {})[pq.quote.option_type] = pq
+
+    pvs: list[float] = []
+    half_spreads: list[float] = []
+    disc_factor = math.exp(-context.r_cc * context.T)
+    for strike, legs in pairs.items():
+        call, put = legs.get("C"), legs.get("P")
+        if call is None or put is None or call.mid is None or put.mid is None:
+            continue
+        if call.quote.bid is None or call.quote.ask is None or put.quote.bid is None or put.quote.ask is None:
+            continue
+        pvs.append(context.actual_spot - strike * disc_factor - (call.mid - put.mid))
+        half_spreads.append(0.5 * ((call.quote.ask - call.quote.bid) + (put.quote.ask - put.quote.bid)))
+
+    if len(pvs) < MIN_SLICE_STRIKES:
+        return None
+    return median(pvs), max(PARITY_MIN_TOLERANCE, median(half_spreads))
+
+
+def parity_dividend_warnings(
+    priced_quotes: tuple[PricedQuote, ...],
+    contexts: dict[date, ExpiryPricingContext],
+) -> tuple[str, ...]:
+    """Emit DIVIDEND_PARITY_DIVERGENCE if any expiry's scheduled pv_dividends
+    disagrees with near-ATM put-call parity beyond bid-ask/rounding tolerance."""
+    for ctx in contexts.values():
+        estimate = implied_dividend_pv(priced_quotes, ctx)
+        if estimate is not None:
+            implied_pv, tolerance = estimate
+            if abs(implied_pv - ctx.pv_dividends) > tolerance:
+                return ("DIVIDEND_PARITY_DIVERGENCE",)
+    return ()
 
 
 def price_quote_v2(
