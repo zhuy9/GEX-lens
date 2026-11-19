@@ -13,9 +13,11 @@ it never touches backend/settings.json or your saved snapshots.
 """
 
 import json
+import os
 import sys
 import tempfile
 from datetime import UTC, datetime
+from email.utils import format_datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -313,8 +315,21 @@ def render(symbol: str, d: dict, f: dict, conversion: dict | None, fixture: bool
         color="#71717a",
     )
     fig.subplots_adjust(left=0.13, right=0.76, top=0.79, bottom=0.05)
-    fig.savefig(path, facecolor="white")
-    plt.close(fig)
+    # Write to a fresh file in the target directory and replace atomically so
+    # existing PNGs get a new inode (fresh filesystem birth time) plus a
+    # Creation Time tEXt chunk.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(dir=path.parent) as tmp_dir:
+            tmp_path = Path(tmp_dir) / path.name
+            fig.savefig(
+                tmp_path,
+                facecolor="white",
+                metadata={"Creation Time": format_datetime(datetime.now(UTC), usegmt=True)},
+            )
+            os.replace(tmp_path, path)
+    finally:
+        plt.close(fig)
 
 
 def main() -> None:
