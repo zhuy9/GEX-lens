@@ -17,8 +17,11 @@ quarterly calendar, amount = last actual), so re-typing it weekly is pure toil.
   actual amount, `amount_status: "estimated"`, `reviewed_at` = run time,
   `source_refs: ["auto:update_dividends.py:..."]`.
 - Projection: SPY ex-date = third Friday of Mar/Jun/Sep/Dec (Thursday when
-  that is Juneteenth); QQQ = the following Monday; AAPL = last ex-date + 13
-  weeks. The script first checks Yahoo's last four ex-dates against the rule
+  that is Good Friday or Juneteenth); QQQ = the following Monday; AAPL =
+  Yahoo `Ticker.info['exDividendDate']` when already declared past the last
+  actual ex-date, otherwise last ex-date + 13 weeks (held on the next weekday
+  for up to 7 days if still awaiting the actual row, then failing beyond 14
+  weeks). The script first checks Yahoo's last four ex-dates against the rule
   (AAPL: every gap 12-14 weeks). A mismatch fails that symbol only: its
   previous entry is kept unchanged (so its 7-day check blocks it within a
   week), the other symbols still update, and the run fails.
