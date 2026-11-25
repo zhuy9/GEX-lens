@@ -4,7 +4,7 @@
 	"schedules": {
 		"AAPL": {
 			"symbol": "AAPL",
-			"reviewed_at": "2026-11-24T05:38:12Z",
+			"reviewed_at": "2026-11-25T04:39:01Z",
 			"coverage_start": "2026-11-24",
 			"coverage_end": "2027-01-08",
 			"no_other_events_expected": true,
@@ -15,7 +15,7 @@
 		},
 		"QQQ": {
 			"symbol": "QQQ",
-			"reviewed_at": "2026-11-24T05:38:12Z",
+			"reviewed_at": "2026-11-25T04:39:01Z",
 			"coverage_start": "2026-11-24",
 			"coverage_end": "2027-01-08",
 			"no_other_events_expected": true,
@@ -35,7 +35,7 @@
 		},
 		"SPY": {
 			"symbol": "SPY",
-			"reviewed_at": "2026-11-24T05:38:12Z",
+			"reviewed_at": "2026-11-25T04:39:01Z",
 			"coverage_start": "2026-11-24",
 			"coverage_end": "2027-01-08",
 			"no_other_events_expected": true,
