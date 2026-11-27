@@ -4,7 +4,7 @@
 	"ratios": {
 		"SPY": {
 			"index": "SPX",
-			"ratio": 10.02111
+			"ratio": 10.02181
 		},
 		"QQQ": {
 			"index": "NDX",
